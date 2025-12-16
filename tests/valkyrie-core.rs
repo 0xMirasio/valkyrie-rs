@@ -8,7 +8,7 @@ static PROJECT_ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
 #[test]
 fn integration_new() {
-    let rootfs_path = Path::new(PROJECT_ROOT).join("rootfs").join("x86-64");
+    let rootfs_path = Path::new(PROJECT_ROOT).join("rootfs").join("x8664_linux");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,

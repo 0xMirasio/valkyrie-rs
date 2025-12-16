@@ -29,7 +29,6 @@ impl ValkyrieConfig {
         })
     }
 
-
     pub fn verbose(mut self, value: bool) -> Self {
         self.verbose = value;
         self

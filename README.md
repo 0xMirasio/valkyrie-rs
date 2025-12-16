@@ -9,6 +9,7 @@ Fast Fuzzing is difficult : qiling/qemu is slow. This project aim to develop a r
 # Install
 
 ```
+git clone https://github.com/0xMirasio/valkyrie-rs.git --recurse --depth 1
 cd valkyrie-rs
 cargo build --release
 ```
