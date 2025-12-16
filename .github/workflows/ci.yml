@@ -9,11 +9,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Clone qiling rootfs into ./rootfs
-        run: git clone --depth 1 https://github.com/qilingframework/rootfs rootfs
-
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Clone qiling rootfs into ./rootfs
+        run: |
+          rm -rf rootfs
+          git clone --depth 1 https://github.com/qilingframework/rootfs rootfs
+          ls -la rootfs
+          test -d rootfs/x8664_linux
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
