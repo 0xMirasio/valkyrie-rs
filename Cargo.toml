@@ -1,0 +1,10 @@
+[package]
+name = "valkyrie-rs"
+version = "1.0.0"
+edition = "2024"
+description = "Rust binary emulator"
+license = "Apache"
+readme = "README.md"
+authors = ["0xMirasio"]
+
+[dependencies]
