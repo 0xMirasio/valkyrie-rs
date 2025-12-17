@@ -27,3 +27,12 @@ jobs:
 
       - name: Cargo test
         run: cargo test --all --locked
+
+      - name: Build release library artifacts
+        run: cargo build --release --locked
+
+      - name: Upload valkyrie library
+        uses: actions/upload-artifact@v4
+        with:
+          name: valkyrie-libs
+          path: target/release/libvalkyrie_rs.so

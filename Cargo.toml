@@ -7,6 +7,9 @@ license = "Apache"
 readme = "README.md"
 authors = ["0xMirasio"]
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 thiserror = "1"
 unicorn-engine = "2.0.1"
