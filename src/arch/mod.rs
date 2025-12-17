@@ -1,4 +1,6 @@
-pub mod x86;
+pub mod regs;
+pub mod x86; //TODO
+pub mod x86_64;
 
 use crate::vtype::{Arch, Endianess};
 use unicorn_engine::unicorn_const::{Arch as UcArch, Mode as UcMode};
@@ -9,6 +11,21 @@ pub struct ArchDefaults {
     pub archsize: u16,
 }
 
+#[derive(Debug, Clone)]
+pub struct VArch {
+    pub arch: Arch,
+    pub regs: regs::VRegs,
+}
+
+impl VArch {
+    pub fn new(arch: Arch) -> Self {
+        Self {
+            arch,
+            regs: regs::VRegs::new(arch),
+        }
+    }
+}
+
 pub fn defaults_for_arch(arch: Arch) -> (Endianess, u16) {
     match arch {
         Arch::X86 => (Endianess::LittleEndian, 32),
@@ -16,7 +33,7 @@ pub fn defaults_for_arch(arch: Arch) -> (Endianess, u16) {
     }
 }
 
-pub fn unicorn_arch(arch: Arch) -> (UcArch, UcMode) {
+pub fn get_unicorn_arch(arch: Arch) -> (UcArch, UcMode) {
     match arch {
         Arch::X86_64 => (UcArch::X86, UcMode::MODE_64),
         Arch::X86 => (UcArch::X86, UcMode::MODE_32),

@@ -46,11 +46,6 @@ impl ValkyrieConfig {
         let code_ram_size: u64 = (PAGE_SIZE as u64) * 1000; // 4000Kb default ram space
         let heap_size: u64 = (PAGE_SIZE as u64) * 100; // 400kb default heap size
 
-        Logger::info(format!(
-            "Default profile used. entry_point=0x{:x}, code_ram_size=0x{:x}, heap_size=0x{:x}",
-            entry_point, code_ram_size, heap_size
-        ));
-
         Ok(Self {
             arch,
             os,

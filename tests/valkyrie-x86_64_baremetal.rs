@@ -1,9 +1,9 @@
+use std::path::Path;
 use valkyrie_rs::Valkyrie;
 use valkyrie_rs::ValkyrieConfig;
+use valkyrie_rs::arch::regs::VRegister;
+use valkyrie_rs::arch::x86_64::RegX86_64;
 use valkyrie_rs::vtype::{Arch, OsType};
-// use valkyrie_rs::error::ValkyrieError;
-
-use std::path::Path;
 
 static PROJECT_ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
@@ -33,6 +33,12 @@ fn integration_new() {
     .unwrap()
     .verbose(true);
 
-    let vk = Valkyrie::run(cfg);
-    assert!(vk.is_ok());
+    let mut vk = Valkyrie::new(cfg).unwrap();
+    let rsp = vk
+        .arch
+        .regs
+        .get_reg(&mut vk.uc, VRegister::X86_64(RegX86_64::RSP))
+        .unwrap();
+
+    assert_eq!(rsp, 0x3e7000);
 }

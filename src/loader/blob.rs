@@ -1,6 +1,11 @@
 use crate::Valkyrie;
+use crate::arch::regs::VRegister;
+use crate::arch::x86_64::RegX86_64;
 use crate::error::{Result, ValkyrieError};
 use crate::loader::Loader;
+use crate::util::Logger;
+
+use unicorn_engine::unicorn_const::Prot;
 
 pub struct LoaderBlob {
     pub load_address: u64,
@@ -25,37 +30,36 @@ impl Loader for LoaderBlob {
             return Err(ValkyrieError::BadConfig("baremetal code must be non-empty"));
         }
 
-        self.load_address = entry; // "for consistency" comme Qiling
+        self.load_address = entry;
 
-        // Map code memory
-        vk.uc
-            .mem_map(entry, code_size, unicorn_engine::unicorn_const::Prot::ALL)
-            .map_err(ValkyrieError::Unicorn)?;
-
-        // Write code
-        vk.uc
-            .mem_write(entry, &vk.cfg.baremetal_code)
-            .map_err(ValkyrieError::Unicorn)?;
+        // map/write code
+        vk.mem
+            .map(&mut vk.uc, entry, code_size, Prot::ALL, "[code]")?;
+        vk.mem.write(&mut vk.uc, entry, &vk.cfg.baremetal_code)?;
 
         // Map Heap
         let heap_addr = entry + code_size;
         let heap_size = vk.cfg.heap_size;
 
+        if vk.cfg.verbose {
+            Logger::info(&format!(
+                "LoaderBlob: entry={:#x} code_ram_size={:#x} heap_size={:#x}",
+                entry, code_size, heap_size
+            ));
+        }
+
         if heap_size == 0 {
             return Err(ValkyrieError::BadConfig("heap_size must be > 0"));
         }
 
-        vk.uc
-            .mem_map(
-                heap_addr,
-                heap_size,
-                unicorn_engine::unicorn_const::Prot::ALL,
-            )
-            .map_err(ValkyrieError::Unicorn)?;
+        vk.mem
+            .map(&mut vk.uc, heap_addr, heap_size, Prot::ALL, "[heap]")?;
 
         // Stack pointer
         let sp = heap_addr.saturating_sub(0x1000);
-        vk.arch.set_sp(&mut vk.uc, sp)?; // tu dois avoir un helper arch
+        vk.arch
+            .regs
+            .set_reg(&mut vk.uc, VRegister::X86_64(RegX86_64::RSP), sp)?;
 
         Ok(())
     }
