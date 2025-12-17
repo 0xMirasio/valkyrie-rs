@@ -18,14 +18,14 @@ type AddrCb<C> = Box<dyn FnMut(&mut C, Option<AnyMut<'_>>) -> Option<u32> + 'sta
 
 pub struct HookEnv<C> {
     pub ctx: C,
-    pub hooks: CoreHooks<C>,
+    pub hooks: VCoreHooks<C>,
 }
 
 impl<C> HookEnv<C> {
     pub fn new(ctx: C) -> Self {
         Self {
             ctx,
-            hooks: CoreHooks::new(),
+            hooks: VCoreHooks::new(),
         }
     }
 }
@@ -61,7 +61,7 @@ struct HookAddr<C> {
     cb: AddrCb<C>,
 }
 
-pub struct CoreHooks<C> {
+pub struct VCoreHooks<C> {
     next_id: HookId,
     hook_fuc: HashMap<HookType, UcHookId>, // hook unicorn HookType
     addr_hook_fuc: HashMap<u64, UcHookId>, // hook unicorn hook_address
@@ -87,7 +87,7 @@ pub enum HookArgs {
     InvalidInsn,
 }
 
-impl<C> CoreHooks<C> {
+impl<C> VCoreHooks<C> {
     pub fn new() -> Self {
         Self {
             next_id: 1,
@@ -613,7 +613,7 @@ impl<C> CoreHooks<C> {
     }
 }
 
-impl<C> Default for CoreHooks<C> {
+impl<C> Default for VCoreHooks<C> {
     fn default() -> Self {
         Self::new()
     }

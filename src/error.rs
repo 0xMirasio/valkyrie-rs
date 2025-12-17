@@ -20,6 +20,9 @@ pub enum ValkyrieError {
     #[error("unsupported arch: {0:?}")]
     UnsupportedArch(crate::vtype::Arch),
 
+    #[error("UnicornGeneralError: {0:?}")]
+    UnicornGeneralError(&'static str),
+
     #[error("unicorn: {0:?}")]
     Unicorn(#[from] unicorn_engine::unicorn_const::uc_error),
 
@@ -28,6 +31,9 @@ pub enum ValkyrieError {
 
     #[error("hook not handled: {0}")]
     HookNotHandled(&'static str),
+
+    #[error("loader error: {0}")]
+    Loader(&'static str),
 }
 
 /// struct errors d'unpack

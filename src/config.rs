@@ -1,8 +1,9 @@
 pub use crate::arch;
 pub use crate::error::ValkyrieError;
+pub use crate::hook::VCoreHooks;
 pub use crate::util::Logger;
 pub use crate::vstruct::VCoreStructs;
-pub use crate::vtype::{Arch, Endianess, OsType};
+pub use crate::vtype::{Arch, Endianess, OsType, PAGE_SIZE, VState};
 
 use std::path::Path;
 
@@ -15,7 +16,10 @@ pub struct ValkyrieConfig {
     pub endianess: Endianess,    // endianess
     pub archsize: u16,           // archsize
     pub baremetal_code: Vec<u8>, // user baremetal code
-    pub vstruct: VCoreStructs,   // VCoreStructs instance
+    pub entry_point: u64,        // program entrypoint
+    pub exit_point: i64,         // program exit_point
+    pub code_ram_size: u64,      // program ram size
+    pub heap_size: u64,          // program heap size
 }
 
 // implement a new ValkyrieConfig.
@@ -36,7 +40,16 @@ impl ValkyrieConfig {
             arch, archsize, endianess
         ));
 
-        let vstruct = VCoreStructs::new(endianess, archsize).unwrap();
+        // todo : add profile management
+
+        let entry_point: u64 = 0x0;
+        let code_ram_size: u64 = (PAGE_SIZE as u64) * 1000; // 4000Kb default ram space
+        let heap_size: u64 = (PAGE_SIZE as u64) * 100; // 400kb default heap size
+
+        Logger::info(format!(
+            "Default profile used. entry_point=0x{:x}, code_ram_size=0x{:x}, heap_size=0x{:x}",
+            entry_point, code_ram_size, heap_size
+        ));
 
         Ok(Self {
             arch,
@@ -46,7 +59,10 @@ impl ValkyrieConfig {
             endianess,
             archsize,
             baremetal_code: Vec::new(),
-            vstruct,
+            entry_point,
+            exit_point: -1, // if no user defined, -1 will make emulator run to the end
+            code_ram_size,
+            heap_size,
         })
     }
 
@@ -74,6 +90,36 @@ impl ValkyrieConfig {
     // setter ValkyrieConfig::endianess
     pub fn endianess(mut self, value: Endianess) -> Self {
         self.endianess = value;
+        self
+    }
+
+    // setter ValkyrieConfig::archsize
+    pub fn archsize(mut self, value: u16) -> Self {
+        self.archsize = value;
+        self
+    }
+
+    // setter ValkyrieConfig::entry_point
+    pub fn entry_point(mut self, value: u64) -> Self {
+        self.entry_point = value;
+        self
+    }
+
+    // setter ValkyrieConfig::exit_point
+    pub fn exit_point(mut self, value: i64) -> Self {
+        self.exit_point = value;
+        self
+    }
+
+    // setter ValkyrieConfig::code_ram_size
+    pub fn code_ram_size(mut self, value: u64) -> Self {
+        self.code_ram_size = value;
+        self
+    }
+
+    // setter ValkyrieConfig::heap_size
+    pub fn heap_size(mut self, value: u64) -> Self {
+        self.heap_size = value;
         self
     }
 }
