@@ -2,7 +2,7 @@ pub mod arch;
 pub mod config;
 pub mod error;
 pub mod hook;
-pub mod loader;
+//pub mod loader;
 pub mod util;
 pub mod vstruct;
 pub mod vtype;
