@@ -1,4 +1,5 @@
 use thiserror::Error;
+use unicorn_engine;
 
 pub type Result<T> = std::result::Result<T, ValkyrieError>;
 
@@ -12,4 +13,26 @@ pub enum ValkyrieError {
 
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
+
+    #[error("struct conversion error: {0}")]
+    StructConversion(&'static str),
+
+    #[error("unsupported arch: {0:?}")]
+    UnsupportedArch(crate::vtype::Arch),
+
+    #[error("unicorn: {0:?}")]
+    Unicorn(#[from] unicorn_engine::unicorn_const::uc_error),
+
+    #[error("hook error: {0}")]
+    Hook(&'static str),
+
+    #[error("hook not handled: {0}")]
+    HookNotHandled(&'static str),
+}
+
+/// struct errors d'unpack
+#[derive(Debug, Clone)]
+pub enum StructError {
+    UnsupportedBitness,
+    BufferTooSmall { expected: usize, got: usize },
 }

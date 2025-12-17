@@ -5,6 +5,12 @@ pub enum Arch {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Endianess {
+    LittleEndian,
+    BigEndian,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OsType {
     BareMetal, // shellcode
 }

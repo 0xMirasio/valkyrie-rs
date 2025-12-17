@@ -1,11 +1,13 @@
 pub mod arch;
 pub mod config;
 pub mod error;
+pub mod hook;
+pub mod util;
+pub mod vstruct;
 pub mod vtype;
 
-pub use arch::x86::{X86Mode, X86RunOptions};
 pub use config::ValkyrieConfig;
-pub use error::{Result, ValkyrieError};
+pub use error::Result;
 
 pub struct Valkyrie {
     cfg: ValkyrieConfig,
@@ -19,7 +21,7 @@ pub struct State {
 
 impl Valkyrie {
     //Valkyrie Instance
-    pub fn new(cfg: ValkyrieConfig) -> Result<Self> {
+    pub fn run(cfg: ValkyrieConfig) -> Result<Self> {
         Ok(Self { cfg })
     }
 

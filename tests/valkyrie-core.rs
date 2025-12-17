@@ -1,10 +1,23 @@
 use valkyrie_rs::Valkyrie;
 use valkyrie_rs::ValkyrieConfig;
 use valkyrie_rs::vtype::{Arch, OsType};
+// use valkyrie_rs::error::ValkyrieError;
 
 use std::path::Path;
 
 static PROJECT_ROOT: &str = env!("CARGO_MANIFEST_DIR");
+
+pub const HELLO_WRITE_X86_64: [u8; 38] = [
+    0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1        ; SYS_write
+    0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1        ; fd=stdout
+    0x48, 0x8D, 0x35, 0x10, 0x00, 0x00, 0x00, // lea rsi, [rip+0x10]; &"hello"
+    0xBA, 0x05, 0x00, 0x00, 0x00, // mov edx, 5        ; len
+    0x0F, 0x05, // syscall
+    0xB8, 0x3C, 0x00, 0x00, 0x00, // mov eax, 60       ; SYS_exit
+    0x31, 0xFF, // xor edi, edi      ; status=0
+    0x0F, 0x05, // syscall
+    0x68, 0x65, 0x6C, 0x6C, 0x6F, // "hello"
+];
 
 #[test]
 fn integration_new() {
@@ -16,8 +29,10 @@ fn integration_new() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
+    .feed_baremetal(&HELLO_WRITE_X86_64)
+    .unwrap()
     .verbose(true);
 
-    let vk = Valkyrie::new(cfg);
+    let vk = Valkyrie::run(cfg);
     assert!(vk.is_ok());
 }

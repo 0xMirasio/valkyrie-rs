@@ -9,3 +9,4 @@ authors = ["0xMirasio"]
 
 [dependencies]
 thiserror = "1"
+unicorn-engine = "2.0.1"
