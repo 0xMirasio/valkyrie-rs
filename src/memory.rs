@@ -81,7 +81,7 @@ impl VMemory {
 
         Logger::info("== Memory regions mappings  ==");
         for (i, r) in self.regions.iter().enumerate() {
-            Logger::info(&format!(
+            Logger::info(format!(
                 "#{i}: {:#x} - {:#x} (size={:#x}) prot={:?} info={}",
                 r.start,
                 r.start + r.size,

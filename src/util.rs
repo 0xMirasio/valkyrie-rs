@@ -52,7 +52,7 @@ impl Logger {
         );
 
         if let LogLevel::Error = level {
-            panic!("fatal error: {}", msg);
+            panic!("fatal error: {msg}");
         }
     }
 

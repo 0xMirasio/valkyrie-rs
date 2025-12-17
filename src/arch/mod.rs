@@ -1,5 +1,5 @@
 pub mod regs;
-pub mod x86; //TODO
+pub mod x86;
 pub mod x86_64;
 
 use crate::vtype::{Arch, Endianess};

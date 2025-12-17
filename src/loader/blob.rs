@@ -1,9 +1,11 @@
 use crate::Valkyrie;
 use crate::arch::regs::VRegister;
+use crate::arch::x86::RegX86;
 use crate::arch::x86_64::RegX86_64;
 use crate::error::{Result, ValkyrieError};
 use crate::loader::Loader;
 use crate::util::Logger;
+use crate::vtype::Arch;
 
 use unicorn_engine::unicorn_const::Prot;
 
@@ -42,9 +44,8 @@ impl Loader for LoaderBlob {
         let heap_size = vk.cfg.heap_size;
 
         if vk.cfg.verbose {
-            Logger::info(&format!(
-                "LoaderBlob: entry={:#x} code_ram_size={:#x} heap_size={:#x}",
-                entry, code_size, heap_size
+            Logger::info(format!(
+                "LoaderBlob: entry={entry:#x} code_ram_size={code_size:#x} heap_size={heap_size:#x}"
             ));
         }
 
@@ -57,10 +58,21 @@ impl Loader for LoaderBlob {
 
         // Stack pointer
         let sp = heap_addr.saturating_sub(0x1000);
-        vk.arch
-            .regs
-            .set_reg(&mut vk.uc, VRegister::X86_64(RegX86_64::RSP), sp)?;
+        vk.arch.regs.set_reg(
+            &mut vk.uc,
+            match vk.cfg.arch {
+                Arch::X86 => VRegister::X86(RegX86::ESP),
+                Arch::X86_64 => VRegister::X86_64(RegX86_64::RSP),
+            },
+            sp,
+        )?;
 
         Ok(())
+    }
+}
+
+impl Default for LoaderBlob {
+    fn default() -> Self {
+        Self::new()
     }
 }

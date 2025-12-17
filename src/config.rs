@@ -36,8 +36,7 @@ impl ValkyrieConfig {
         let (endianess, archsize) = arch::defaults_for_arch(arch);
 
         Logger::info(format!(
-            "guessed arch defaults: arch={:?}, archsize={}bit, endianess={:?}",
-            arch, archsize, endianess
+            "guessed arch defaults: arch={arch:?}, archsize={archsize}bit, endianess={endianess:?}"
         ));
 
         // todo : add profile management
