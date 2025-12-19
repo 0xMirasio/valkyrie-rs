@@ -12,24 +12,26 @@ pub mod vtype;
 pub use arch::VArch;
 pub use config::ValkyrieConfig;
 pub use error::Result;
-pub use hook::VCoreHooks;
+pub use hook::{HookEnv, VCoreHooks};
 pub use memory::VMemory;
 pub use os::VCoreOs;
 pub use vstruct::VCoreStructs;
 pub use vtype::VState;
 
+use error::ValkyrieError;
 use unicorn_engine::Unicorn;
+use util::Logger;
 use vtype::Arch;
 
 pub struct Valkyrie {
     cfg: ValkyrieConfig,
-    pub vstruct: VCoreStructs,           // VCoreStructs instance
-    pub vcorehook: VCoreHooks<Valkyrie>, // VCoreHooks instance
-    pub vstate: VState,                  // emulation state
-    pub uc: Unicorn<'static, ()>,        // Unicorn engine
-    pub arch: arch::VArch,               // arch subgroup
-    pub mem: memory::VMemory,            // mem subgroup
-    pub os: os::VCoreOs,                 // os subgroup
+    pub vstruct: VCoreStructs,                   // VCoreStructs instance
+    pub vcorehook: VCoreHooks<Valkyrie>,         // VCoreHooks instance
+    pub vstate: VState,                          // emulation state
+    pub uc: Unicorn<'static, HookEnv<Valkyrie>>, // Unicorn engine
+    pub arch: arch::VArch,                       // arch subgroup
+    pub mem: memory::VMemory,                    // mem subgroup
+    pub os: os::VCoreOs,                         // os subgroup
     pub exit_trap_addr: Option<u64>,
     pub exit_trap_hook: Option<unicorn_engine::UcHookId>,
     pub initial_sp: u64,
@@ -44,16 +46,16 @@ pub struct State {
 impl Valkyrie {
     //Valkyrie Instance
     pub fn new(cfg: ValkyrieConfig) -> Result<Self> {
-        let vcorehook = VCoreHooks::new();
+        let vcorehook: VCoreHooks<Valkyrie> = VCoreHooks::new();
         let vstruct = VCoreStructs::new(cfg.endianess, cfg.archsize).unwrap();
         let vstate = VState::NotSet;
 
         let (uc_arch, uc_mode) = arch::get_unicorn_arch(cfg.arch);
         let arch_subgroup = arch::VArch::new(cfg.arch);
 
-        let uc = Unicorn::new(uc_arch, uc_mode).map_err(|_| {
-            crate::error::ValkyrieError::UnicornGeneralError("failed to create unicorn")
-        })?;
+        let uc: Unicorn<'static, HookEnv<Valkyrie>> =
+            Unicorn::new_with_data(uc_arch, uc_mode, HookEnv::new())
+                .map_err(|_| ValkyrieError::UnicornGeneralError("failed to create unicorn"))?;
 
         let mem_handle = memory::VMemory::new(&cfg).unwrap();
         let os_handle = os::select_os(cfg.os)?;
@@ -72,6 +74,9 @@ impl Valkyrie {
             initial_sp: 0,
         };
 
+        let vk_ptr: *mut Valkyrie = &mut vk;
+        vk.uc.get_data_mut().set_ctx_ptr(vk_ptr);
+
         let mut ldr = loader::select_loader(vk.cfg.os)?;
         ldr.run(&mut vk)?;
 
@@ -81,7 +86,47 @@ impl Valkyrie {
             ldr.skip_exit_check(),
         );
 
+        if vk.cfg.disassemble {
+            vk.enable_instruction_trace()?;
+        }
+
         Ok(vk)
+    }
+
+    pub fn enable_instruction_trace(&mut self) -> Result<()> {
+        Logger::debug("Enabling instruction trace hook", self.cfg.verbose);
+        let hooks_ptr: *mut VCoreHooks<Valkyrie>;
+        {
+            let self_ptr: *mut Valkyrie = self;
+            let env = self.uc.get_data_mut();
+            env.set_ctx_ptr(self_ptr);
+            env.disasm_enabled = true;
+
+            hooks_ptr = &mut env.hooks as *mut _;
+        }
+
+        unsafe {
+            (*hooks_ptr)
+                .hook_code(
+                    &mut self.uc,
+                    |vk: &mut Valkyrie, addr: u64, size: u32, _ud: Option<&mut ()>| {
+                        if size != 0 {
+                            if let Err(e) =
+                                vk.mem.show_instructions(&mut vk.uc, addr, size as usize)
+                            {
+                                Logger::warning(format!("disassembly failed at {addr:#x}: {e}"));
+                            }
+                        }
+                        None
+                    },
+                    None::<()>,
+                    1,
+                    0,
+                )
+                .unwrap();
+        }
+
+        Ok(())
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -89,6 +134,7 @@ impl Valkyrie {
         self.write_exit_trap()?;
 
         let os_runner = self.os.clone();
+        self.vstate = VState::Running;
         os_runner.run(self)
     }
 
@@ -140,17 +186,13 @@ impl Valkyrie {
         self.initial_sp = self.arch.regs.get_reg(&mut self.uc, stack_reg)?;
 
         let ptr_size = (self.cfg.archsize / 8) as usize;
-        let new_sp = self.initial_sp.saturating_sub(ptr_size as u64);
-
         let trap_bytes = trap_addr.to_le_bytes();
 
         self.mem
-            .write(&mut self.uc, new_sp, &trap_bytes[..ptr_size])
+            .write(&mut self.uc, self.initial_sp, &trap_bytes[..ptr_size])
             .map_err(|_| {
                 crate::error::ValkyrieError::UnicornGeneralError("failed to write exit trap")
             })?;
-
-        self.arch.regs.set_reg(&mut self.uc, stack_reg, new_sp)?;
 
         Ok(())
     }

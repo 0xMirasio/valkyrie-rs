@@ -1,0 +1,2 @@
+- rust capstone/unicorn compilation is slow. Always wait maximum 15minutes before cancelling build/pipeline. 
+- always initialize projects submodule

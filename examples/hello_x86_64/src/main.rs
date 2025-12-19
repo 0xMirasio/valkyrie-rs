@@ -27,6 +27,7 @@ fn main() {
     )
     .unwrap()
     .verbose(true)
+    .disassemble(true)
     .feed_baremetal(&HELLO_WRITE_X86_64)
     .unwrap();
 
@@ -40,14 +41,6 @@ fn main() {
 
     Logger::info(&format!("RSP = {rsp:#x}"));
     vk.run().unwrap();
-    let trap_addr = vk.exit_trap_addr.expect("exit trap not set");
-    let stack_bytes = vk.mem.read(&mut vk.uc, rsp, 8).unwrap();
-    let trapped = u64::from_le_bytes(stack_bytes.try_into().unwrap());
-
     vk.mem.show_mappings();
-    Logger::info(&format!(
-        "rsp = {rsp:#x} | trapped = {trap_addr:#x} | exit_trap = {trapped:#x}"
-    ));
-
     Logger::success("Valkyrie : done");
 }

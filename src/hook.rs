@@ -1,3 +1,4 @@
+use core::ptr::NonNull;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -17,16 +18,27 @@ type HookCb<C, Args> = Box<dyn FnMut(&mut C, Args, Option<AnyMut<'_>>) -> Option
 type AddrCb<C> = Box<dyn FnMut(&mut C, Option<AnyMut<'_>>) -> Option<u32> + 'static>;
 
 pub struct HookEnv<C> {
-    pub ctx: C,
+    ctx: Option<NonNull<C>>,
     pub hooks: VCoreHooks<C>,
+    pub disasm_enabled: bool,
 }
 
 impl<C> HookEnv<C> {
-    pub fn new(ctx: C) -> Self {
+    pub fn new() -> Self {
         Self {
-            ctx,
+            ctx: None,
             hooks: VCoreHooks::new(),
+            disasm_enabled: false,
         }
+    }
+
+    pub fn set_ctx_ptr(&mut self, ptr: *mut C) {
+        self.ctx = NonNull::new(ptr);
+    }
+
+    #[inline]
+    pub unsafe fn ctx_mut(&mut self) -> &mut C {
+        unsafe { self.ctx.expect("HookEnv ctx not set").as_mut() }
     }
 }
 
@@ -127,9 +139,10 @@ impl<C> VCoreHooks<C> {
             let env_ptr = uc.get_data_mut() as *mut HookEnv<C>;
             unsafe {
                 let env = &mut *env_ptr;
-                let _ = env
-                    .hooks
-                    .dispatch_common(&mut env.ctx, t, HookArgs::Trace { addr, size });
+                let ctx = env.ctx_mut() as *mut C;
+                let hooks = &mut env.hooks;
+
+                let _ = hooks.dispatch_common(&mut *ctx, t, HookArgs::Trace { addr, size });
             }
         })?;
 
@@ -150,9 +163,10 @@ impl<C> VCoreHooks<C> {
             let env_ptr = uc.get_data_mut() as *mut HookEnv<C>;
             unsafe {
                 let env = &mut *env_ptr;
-                let _ = env
-                    .hooks
-                    .dispatch_common(&mut env.ctx, t, HookArgs::Trace { addr, size });
+                let ctx = env.ctx_mut() as *mut C;
+                let hooks = &mut env.hooks;
+
+                let _ = hooks.dispatch_common(&mut *ctx, t, HookArgs::Trace { addr, size });
             }
         })?;
 
@@ -173,9 +187,10 @@ impl<C> VCoreHooks<C> {
             let env_ptr = uc.get_data_mut() as *mut HookEnv<C>;
             unsafe {
                 let env = &mut *env_ptr;
-                let _ = env
-                    .hooks
-                    .dispatch_common(&mut env.ctx, t, HookArgs::Intr { intno });
+                let ctx = env.ctx_mut() as *mut C;
+                let hooks = &mut env.hooks;
+
+                let _ = hooks.dispatch_common(&mut *ctx, t, HookArgs::Intr { intno });
             }
         })?;
 
@@ -194,10 +209,13 @@ impl<C> VCoreHooks<C> {
 
         let hook_id = uc.add_insn_invalid_hook(move |uc| {
             let env_ptr = uc.get_data_mut() as *mut HookEnv<C>;
+
             unsafe {
                 let env = &mut *env_ptr;
-                env.hooks
-                    .dispatch_common(&mut env.ctx, t, HookArgs::InvalidInsn)
+                let ctx = env.ctx_mut() as *mut C;
+                let hooks = &mut env.hooks;
+                hooks
+                    .dispatch_common(&mut *ctx, t, HookArgs::InvalidInsn)
                     .is_ok()
             }
         })?;
@@ -219,9 +237,11 @@ impl<C> VCoreHooks<C> {
             let env_ptr = uc.get_data_mut() as *mut HookEnv<C>;
             unsafe {
                 let env = &mut *env_ptr;
-                env.hooks
+                let ctx = env.ctx_mut() as *mut C;
+                let hooks = &mut env.hooks;
+                hooks
                     .dispatch_common(
-                        &mut env.ctx,
+                        &mut *ctx,
                         t,
                         HookArgs::Mem {
                             access,
@@ -251,7 +271,9 @@ impl<C> VCoreHooks<C> {
             let env_ptr = uc.get_data_mut() as *mut HookEnv<C>;
             unsafe {
                 let env = &mut *env_ptr;
-                let _ = env.hooks.dispatch_addr(&mut env.ctx, addr);
+                let ctx = env.ctx_mut() as *mut C;
+                let hooks = &mut env.hooks;
+                let _ = hooks.dispatch_addr(&mut *ctx, addr);
             }
         })?;
 
@@ -298,10 +320,6 @@ impl<C> VCoreHooks<C> {
             || ((hook_type & HookType::MEM_PROT).0 != 0)
             || hook_type == HookType::INTR
             || hook_type == HookType::INSN_INVALID;
-
-        if needs_handled && !handled {
-            return Err(ValkyrieError::HookNotHandled("event not handled"));
-        }
 
         if needs_handled && !handled {
             return Err(ValkyrieError::HookNotHandled("event not handled"));

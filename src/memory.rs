@@ -104,6 +104,31 @@ impl VMemory {
         }
     }
 
+    pub fn show_instructions<D>(
+        &self,
+        uc: &mut Unicorn<'_, D>,
+        addr: u64,
+        size: usize,
+    ) -> Result<()> {
+        if size == 0 {
+            return Ok(());
+        }
+
+        let insns = self.disassemble(uc, addr, size)?;
+        if insns.is_empty() {
+            Logger::warning(format!(
+                "disassembler produced no instructions at {addr:#x}"
+            ));
+            return Ok(());
+        }
+
+        for insn in insns {
+            Logger::info(insn);
+        }
+
+        Ok(())
+    }
+
     pub fn disassemble<D>(
         &self,
         uc: &mut Unicorn<'_, D>,

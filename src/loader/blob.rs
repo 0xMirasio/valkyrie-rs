@@ -44,9 +44,12 @@ impl Loader for LoaderBlob {
         let heap_size = vk.cfg.heap_size;
 
         if vk.cfg.verbose {
-            Logger::info(format!(
-                "LoaderBlob: entry={entry:#x} code_ram_size={code_size:#x} heap_size={heap_size:#x}"
-            ));
+            Logger::debug(
+                format!(
+                    "LoaderBlob: entry={entry:#x} code_ram_size={code_size:#x} heap_size={heap_size:#x}"
+                ),
+                vk.cfg.verbose,
+            );
         }
 
         if heap_size == 0 {
