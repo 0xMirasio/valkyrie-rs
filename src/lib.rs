@@ -112,12 +112,11 @@ impl Valkyrie {
                 .hook_code(
                     &mut self.uc,
                     |vk: &mut Valkyrie, addr: u64, size: u32, _ud: Option<&mut ()>| {
-                        if size != 0 {
-                            if let Err(e) =
+                        if size != 0
+                            && let Err(e) =
                                 vk.mem.show_instructions(&mut vk.uc, addr, size as usize)
-                            {
-                                Logger::warning(format!("disassembly failed at {addr:#x}: {e}"));
-                            }
+                        {
+                            Logger::warning(format!("disassembly failed at {addr:#x}: {e}"));
                         }
                         None
                     },
