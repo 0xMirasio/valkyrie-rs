@@ -28,6 +28,7 @@ fn main() {
     .unwrap()
     .verbose(true)
     .disassemble(true)
+    .entry_point(0x400000)
     .feed_baremetal(&HELLO_WRITE_X86_64)
     .unwrap();
 
@@ -40,7 +41,8 @@ fn main() {
         .unwrap();
 
     Logger::info(&format!("RSP = {rsp:#x}"));
-    vk.run().unwrap();
     vk.mem.show_mappings();
+
+    vk.run().unwrap();
     Logger::success("Valkyrie : done");
 }

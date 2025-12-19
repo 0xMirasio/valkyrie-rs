@@ -74,9 +74,6 @@ impl Valkyrie {
             initial_sp: 0,
         };
 
-        let vk_ptr: *mut Valkyrie = &mut vk;
-        vk.uc.get_data_mut().set_ctx_ptr(vk_ptr);
-
         let mut ldr = loader::select_loader(vk.cfg.os)?;
         ldr.run(&mut vk)?;
 
@@ -93,13 +90,18 @@ impl Valkyrie {
         Ok(vk)
     }
 
+    fn refresh_ctx_ptr(&mut self) {
+        let self_ptr: *mut Valkyrie = self;
+        self.uc.get_data_mut().set_ctx_ptr(self_ptr);
+    }
+
     pub fn enable_instruction_trace(&mut self) -> Result<()> {
         Logger::debug("Enabling instruction trace hook", self.cfg.verbose);
+        self.refresh_ctx_ptr();
+
         let hooks_ptr: *mut VCoreHooks<Valkyrie>;
         {
-            let self_ptr: *mut Valkyrie = self;
             let env = self.uc.get_data_mut();
-            env.set_ctx_ptr(self_ptr);
             env.disasm_enabled = true;
 
             hooks_ptr = &mut env.hooks as *mut _;
@@ -130,6 +132,7 @@ impl Valkyrie {
     }
 
     pub fn run(&mut self) -> Result<()> {
+        self.refresh_ctx_ptr();
         self.setup_trap()?;
         self.write_exit_trap()?;
 

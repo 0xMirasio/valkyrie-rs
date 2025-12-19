@@ -1,6 +1,7 @@
 use crate::Valkyrie;
 use crate::error::Result;
 use crate::os::Os;
+use crate::util::Logger;
 use crate::vtype::VState;
 
 #[derive(Debug, Clone)]
@@ -33,6 +34,19 @@ impl Os for OsBlob {
 
     fn run(&self, vk: &mut Valkyrie) -> Result<()> {
         vk.vstate = VState::Running;
+
+        if vk.cfg.exit_point == 0 {
+            vk.cfg.exit_point = vk
+                .cfg
+                .entry_point
+                .saturating_add(vk.cfg.baremetal_code.len() as u64);
+        }
+
+        Logger::info(format!(
+            "OsBlob: Starting emulation at entry point {:#x} / {:#x}",
+            vk.cfg.entry_point, vk.cfg.exit_point
+        ));
+
         vk.uc.emu_start(
             vk.cfg.entry_point,
             vk.cfg.exit_point,
