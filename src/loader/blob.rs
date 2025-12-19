@@ -69,6 +69,10 @@ impl Loader for LoaderBlob {
 
         Ok(())
     }
+
+    fn load_address(&self) -> u64 {
+        self.load_address
+    }
 }
 
 impl Default for LoaderBlob {

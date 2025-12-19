@@ -7,16 +7,9 @@ use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
 
 // Remplace par ton tableau réel
-pub const HELLO_WRITE_X86_64: [u8; 38] = [
+pub const HELLO_WRITE_X86_64: [u8; 10] = [
     0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
     0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
-    0x48, 0x8D, 0x35, 0x10, 0x00, 0x00, 0x00, // lea rsi, [rip+0x10]
-    0xBA, 0x05, 0x00, 0x00, 0x00, // mov edx, 5
-    0x0F, 0x05, // syscall
-    0xB8, 0x3C, 0x00, 0x00, 0x00, // mov eax, 60
-    0x31, 0xFF, // xor edi, edi
-    0x0F, 0x05, // syscall
-    0x68, 0x65, 0x6C, 0x6C, 0x6F, // "hello"
 ];
 
 fn main() {
@@ -39,13 +32,22 @@ fn main() {
 
     let mut vk = Valkyrie::new(cfg).unwrap();
 
-    vk.mem.show_mappings();
     let rsp = vk
         .arch
         .regs
         .get_reg(&mut vk.uc, VRegister::X86_64(RegX86_64::RSP))
         .unwrap();
 
-    Logger::info(&format!("RSP = {:#x}", rsp));
+    Logger::info(&format!("RSP = {rsp:#x}"));
+    vk.run().unwrap();
+    let trap_addr = vk.exit_trap_addr.expect("exit trap not set");
+    let stack_bytes = vk.mem.read(&mut vk.uc, rsp, 8).unwrap();
+    let trapped = u64::from_le_bytes(stack_bytes.try_into().unwrap());
+
+    vk.mem.show_mappings();
+    Logger::info(&format!(
+        "rsp = {rsp:#x} | trapped = {trap_addr:#x} | exit_trap = {trapped:#x}"
+    ));
+
     Logger::success("Valkyrie : done");
 }

@@ -7,6 +7,11 @@ use crate::vtype::OsType;
 
 pub trait Loader {
     fn run(&mut self, vk: &mut Valkyrie) -> Result<()>;
+    fn load_address(&self) -> u64;
+
+    fn skip_exit_check(&self) -> bool {
+        false
+    }
 }
 
 pub fn select_loader(ostype: OsType) -> Result<Box<dyn Loader>> {

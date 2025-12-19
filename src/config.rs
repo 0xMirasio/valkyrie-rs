@@ -17,9 +17,12 @@ pub struct ValkyrieConfig {
     pub archsize: u16,           // archsize
     pub baremetal_code: Vec<u8>, // user baremetal code
     pub entry_point: u64,        // program entrypoint
-    pub exit_point: i64,         // program exit_point
+    pub exit_point: u64,         // program exit_point
     pub code_ram_size: u64,      // program ram size
     pub heap_size: u64,          // program heap size
+    pub count: usize,            // program instruction max count
+    pub timeout: u64,            // program execution max timeout
+    pub disassemble: bool,       // disassemble execution
 }
 
 // implement a new ValkyrieConfig.
@@ -41,7 +44,6 @@ impl ValkyrieConfig {
 
         // todo : add profile management
 
-        let entry_point: u64 = 0x0;
         let code_ram_size: u64 = (PAGE_SIZE as u64) * 1000; // 4000Kb default ram space
         let heap_size: u64 = (PAGE_SIZE as u64) * 100; // 400kb default heap size
 
@@ -53,10 +55,13 @@ impl ValkyrieConfig {
             endianess,
             archsize,
             baremetal_code: Vec::new(),
-            entry_point,
-            exit_point: -1, // if no user defined, -1 will make emulator run to the end
+            entry_point: 0,
+            exit_point: 0,
             code_ram_size,
             heap_size,
+            count: usize::MAX, // no instructions limit
+            timeout: u64::MAX, // no timeout limit
+            disassemble: false,
         })
     }
 
@@ -81,6 +86,12 @@ impl ValkyrieConfig {
         self
     }
 
+    //set ValkyrieConfig::disassemble
+    pub fn disassemble(mut self, value: bool) -> Self {
+        self.disassemble = value;
+        self
+    }
+
     // setter ValkyrieConfig::endianess
     pub fn endianess(mut self, value: Endianess) -> Self {
         self.endianess = value;
@@ -100,7 +111,7 @@ impl ValkyrieConfig {
     }
 
     // setter ValkyrieConfig::exit_point
-    pub fn exit_point(mut self, value: i64) -> Self {
+    pub fn exit_point(mut self, value: u64) -> Self {
         self.exit_point = value;
         self
     }

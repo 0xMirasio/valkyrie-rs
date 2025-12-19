@@ -7,16 +7,9 @@ use valkyrie_rs::vtype::{Arch, OsType};
 
 static PROJECT_ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
-pub const HELLO_WRITE_X86_64: [u8; 38] = [
+pub const HELLO_WRITE_X86_64: [u8; 10] = [
     0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1        ; SYS_write
     0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1        ; fd=stdout
-    0x48, 0x8D, 0x35, 0x10, 0x00, 0x00, 0x00, // lea rsi, [rip+0x10]; &"hello"
-    0xBA, 0x05, 0x00, 0x00, 0x00, // mov edx, 5        ; len
-    0x0F, 0x05, // syscall
-    0xB8, 0x3C, 0x00, 0x00, 0x00, // mov eax, 60       ; SYS_exit
-    0x31, 0xFF, // xor edi, edi      ; status=0
-    0x0F, 0x05, // syscall
-    0x68, 0x65, 0x6C, 0x6C, 0x6F, // "hello"
 ];
 
 #[test]
@@ -31,6 +24,7 @@ fn integration_new() {
     .unwrap()
     .feed_baremetal(&HELLO_WRITE_X86_64)
     .unwrap()
+    .disassemble(true)
     .verbose(true);
 
     let mut vk = Valkyrie::new(cfg).unwrap();
@@ -41,4 +35,11 @@ fn integration_new() {
         .unwrap();
 
     assert_eq!(rsp, 0x3e7000);
+
+    vk.run().unwrap();
+    let trap_addr = vk.exit_trap_addr.expect("exit trap not set");
+    let stack_bytes = vk.mem.read(&mut vk.uc, rsp, 8).unwrap();
+    let trapped = u64::from_le_bytes(stack_bytes.try_into().unwrap());
+
+    assert_eq!(trapped, trap_addr);
 }

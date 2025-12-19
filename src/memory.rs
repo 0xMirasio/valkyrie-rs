@@ -1,6 +1,10 @@
+use crate::config::ValkyrieConfig;
 use crate::error::{Result, ValkyrieError};
 use crate::util::Logger;
+use crate::vtype::Arch;
 
+use capstone::arch::x86::{ArchMode, ArchSyntax};
+use capstone::prelude::*;
 use unicorn_engine::Unicorn;
 use unicorn_engine::unicorn_const::Prot;
 
@@ -12,16 +16,24 @@ pub struct VMemRegion {
     pub info: &'static str,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug)]
 pub struct VMemory {
     regions: Vec<VMemRegion>,
+    disassembler: Option<Capstone>,
 }
 
 impl VMemory {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(cfg: &ValkyrieConfig) -> Result<Self> {
+        let disassembler = if cfg.disassemble {
+            Some(Self::build_disassembler(cfg.arch, cfg.archsize)?)
+        } else {
+            None
+        };
+
+        Ok(Self {
             regions: Vec::new(),
-        }
+            disassembler,
+        })
     }
 
     pub fn map<D>(
@@ -89,6 +101,49 @@ impl VMemory {
                 r.prot,
                 r.info
             ));
+        }
+    }
+
+    pub fn disassemble<D>(
+        &self,
+        uc: &mut Unicorn<'_, D>,
+        addr: u64,
+        size: usize,
+    ) -> Result<Vec<String>> {
+        let cs = self
+            .disassembler
+            .as_ref()
+            .ok_or(ValkyrieError::Disassembler("disassembler disabled"))?;
+
+        let mut buf = vec![0u8; size];
+        uc.mem_read(addr, &mut buf)
+            .map_err(|_| ValkyrieError::UnicornGeneralError("mem_read failed"))?;
+
+        let insns = cs
+            .disasm_all(&buf, addr)
+            .map_err(|_| ValkyrieError::Disassembler("failed to disassemble"))?;
+
+        Ok(insns
+            .iter()
+            .map(|i| format!("{:#x}: {}", i.address(), i))
+            .collect())
+    }
+
+    fn build_disassembler(arch: Arch, archsize: u16) -> Result<Capstone> {
+        match (arch, archsize) {
+            (Arch::X86, 32) => Capstone::new()
+                .x86()
+                .mode(ArchMode::Mode32)
+                .syntax(ArchSyntax::Intel)
+                .build()
+                .map_err(|_| ValkyrieError::Disassembler("failed to init x86 disassembler")),
+            (Arch::X86_64, 64) => Capstone::new()
+                .x86()
+                .mode(ArchMode::Mode64)
+                .syntax(ArchSyntax::Intel)
+                .build()
+                .map_err(|_| ValkyrieError::Disassembler("failed to init x86_64 disassembler")),
+            _ => Err(ValkyrieError::UnsupportedArch(arch)),
         }
     }
 }

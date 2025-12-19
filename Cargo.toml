@@ -13,3 +13,4 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 thiserror = "1"
 unicorn-engine = "2.0.1"
+capstone="0.13.0"

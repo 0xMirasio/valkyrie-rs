@@ -34,6 +34,9 @@ pub enum ValkyrieError {
 
     #[error("loader error: {0}")]
     Loader(&'static str),
+
+    #[error("disassembler error: {0}")]
+    Disassembler(&'static str),
 }
 
 /// struct errors d'unpack
