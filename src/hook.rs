@@ -23,6 +23,12 @@ pub struct HookEnv<C> {
     pub disasm_enabled: bool,
 }
 
+impl<C> Default for HookEnv<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<C> HookEnv<C> {
     pub fn new() -> Self {
         Self {
@@ -36,7 +42,11 @@ impl<C> HookEnv<C> {
         self.ctx = NonNull::new(ptr);
     }
 
-    #[inline]
+    /// Returns a mutable reference to the hooked context.
+    /// # Safety
+    /// - `set_ctx_ptr()` (or equivalent) must have been called with a valid pointer to a live `C`.
+    /// - The pointer must remain valid for the whole time this method is used.
+    /// - No other mutable reference to the same `C` may exist while the returned `&mut C` is alive.
     pub unsafe fn ctx_mut(&mut self) -> &mut C {
         unsafe { self.ctx.expect("HookEnv ctx not set").as_mut() }
     }
