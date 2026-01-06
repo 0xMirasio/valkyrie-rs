@@ -95,11 +95,11 @@ impl Valkyrie {
             Logger::info("Debug mode enabled, launching udbserver");
             let handle = vk.uc.get_handle();
             let udb_uc = unsafe { Unicorn::from_handle(handle) }
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
             vk.udb_uc = Some(Box::new(udb_uc));
             if let Some(udb_uc) = vk.udb_uc.as_mut() {
                 udbserver::udbserver(udb_uc.as_mut(), vk.cfg.debug_port, ldr.load_address())
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
             }
         }
 
