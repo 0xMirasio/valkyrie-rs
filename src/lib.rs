@@ -27,13 +27,14 @@ use std::fmt::Write;
 
 pub struct Valkyrie {
     cfg: ValkyrieConfig,
-    pub vstruct: VCoreStructs,                   // VCoreStructs instance
-    pub vcorehook: VCoreHooks<Valkyrie>,         // VCoreHooks instance
-    pub vstate: VState,                          // emulation state
-    pub uc: Unicorn<'static, HookEnv<Valkyrie>>, // Unicorn engine
-    pub arch: arch::VArch,                       // arch subgroup
-    pub mem: memory::VMemory,                    // mem subgroup
-    pub os: os::VCoreOs,                         // os subgroup
+    pub vstruct: VCoreStructs,                     // VCoreStructs instance
+    pub vcorehook: VCoreHooks<Valkyrie>,           // VCoreHooks instance
+    pub vstate: VState,                            // emulation state
+    pub uc: Unicorn<'static, HookEnv<Valkyrie>>,   // Unicorn engine
+    pub udb_uc: Option<Box<Unicorn<'static, ()>>>, // udbserver unicorn engine
+    pub arch: arch::VArch,                         // arch subgroup
+    pub mem: memory::VMemory,                      // mem subgroup
+    pub os: os::VCoreOs,                           // os subgroup
     pub exit_trap_addr: Option<u64>,
     pub exit_trap_hook: Option<unicorn_engine::UcHookId>,
     pub initial_sp: u64,
@@ -68,6 +69,7 @@ impl Valkyrie {
             vcorehook,
             vstate,
             uc,
+            udb_uc: None,
             arch: arch_subgroup,
             mem: mem_handle,
             os: os_handle,
@@ -91,9 +93,14 @@ impl Valkyrie {
 
         if vk.cfg.debug {
             Logger::info("Debug mode enabled, launching udbserver");
-            panic!("udbserver not supported yet");
-            //udbserver::udbserver(&mut vk.uc, vk.cfg.debug_port, ldr.load_address())
-            //    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            let handle = vk.uc.get_handle();
+            let udb_uc = unsafe { Unicorn::from_handle(handle) }
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            vk.udb_uc = Some(Box::new(udb_uc));
+            if let Some(udb_uc) = vk.udb_uc.as_mut() {
+                udbserver::udbserver(udb_uc.as_mut(), vk.cfg.debug_port, ldr.load_address())
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            }
         }
 
         Ok(vk)

@@ -2,8 +2,10 @@ name: Rust CI
 
 on:
   push:
+    branches:
+      - main
+      - dev
   pull_request:
-
 jobs:
   ci:
     runs-on: ubuntu-latest
