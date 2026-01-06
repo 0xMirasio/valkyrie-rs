@@ -23,6 +23,8 @@ use unicorn_engine::Unicorn;
 use util::Logger;
 use vtype::Arch;
 
+use std::fmt::Write;
+
 pub struct Valkyrie {
     cfg: ValkyrieConfig,
     pub vstruct: VCoreStructs,                   // VCoreStructs instance
@@ -87,6 +89,13 @@ impl Valkyrie {
             vk.enable_instruction_trace()?;
         }
 
+        if vk.cfg.debug {
+            Logger::info("Debug mode enabled, launching udbserver");
+            panic!("udbserver not supported yet");
+            //udbserver::udbserver(&mut vk.uc, vk.cfg.debug_port, ldr.load_address())
+            //    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        }
+
         Ok(vk)
     }
 
@@ -138,6 +147,159 @@ impl Valkyrie {
         let os_runner = self.os.clone();
         self.vstate = VState::Running;
         os_runner.run(self)
+    }
+
+    pub fn panic_with_unicorn_context(
+        &mut self,
+        err: unicorn_engine::unicorn_const::uc_error,
+    ) -> ! {
+        let pc_reg: arch::regs::VRegister;
+        let sp_reg: arch::regs::VRegister;
+        let color_red = "\u{1b}[1;31m";
+        let color_cyan = "\u{1b}[1;36m";
+        let color_reset = "\u{1b}[0m";
+
+        match self.cfg.arch {
+            Arch::X86 => {
+                pc_reg = arch::regs::VRegister::X86(arch::x86::RegX86::EIP);
+                sp_reg = arch::regs::VRegister::X86(arch::x86::RegX86::ESP);
+            }
+            Arch::X86_64 => {
+                pc_reg = arch::regs::VRegister::X86_64(arch::x86_64::RegX86_64::RIP);
+                sp_reg = arch::regs::VRegister::X86_64(arch::x86_64::RegX86_64::RSP);
+            }
+        }
+
+        let pc = self.arch.regs.get_reg(&mut self.uc, pc_reg).unwrap_or(0);
+        let sp = self.arch.regs.get_reg(&mut self.uc, sp_reg).unwrap_or(0);
+        let mut report = String::new();
+
+        let _ = writeln!(
+            report,
+            "{color_red}Valkyrie panic:{color_reset} unicorn error {err:?} at pc={pc:#x} sp={sp:#x}"
+        );
+        let _ = writeln!(report, "{color_cyan}== Registers =={color_reset}");
+        match self.cfg.arch {
+            Arch::X86 => {
+                let regs = vec![
+                    ("EAX", arch::x86::RegX86::EAX),
+                    ("EBX", arch::x86::RegX86::EBX),
+                    ("ECX", arch::x86::RegX86::ECX),
+                    ("EDX", arch::x86::RegX86::EDX),
+                    ("ESI", arch::x86::RegX86::ESI),
+                    ("EDI", arch::x86::RegX86::EDI),
+                    ("EBP", arch::x86::RegX86::EBP),
+                    ("ESP", arch::x86::RegX86::ESP),
+                    ("EIP", arch::x86::RegX86::EIP),
+                    ("EFLAGS", arch::x86::RegX86::EFLAGS),
+                ];
+                for (name, reg) in regs {
+                    let value = self
+                        .arch
+                        .regs
+                        .get_reg(&mut self.uc, arch::regs::VRegister::X86(reg));
+                    match value {
+                        Ok(val) => {
+                            let _ = writeln!(report, "{name:>6} = {val:#010x}");
+                        }
+                        Err(err) => {
+                            let _ = writeln!(report, "{name:>6} = <err {err}>");
+                        }
+                    }
+                }
+            }
+            Arch::X86_64 => {
+                let regs = vec![
+                    ("RAX", arch::x86_64::RegX86_64::RAX),
+                    ("RBX", arch::x86_64::RegX86_64::RBX),
+                    ("RCX", arch::x86_64::RegX86_64::RCX),
+                    ("RDX", arch::x86_64::RegX86_64::RDX),
+                    ("RSI", arch::x86_64::RegX86_64::RSI),
+                    ("RDI", arch::x86_64::RegX86_64::RDI),
+                    ("RBP", arch::x86_64::RegX86_64::RBP),
+                    ("RSP", arch::x86_64::RegX86_64::RSP),
+                    ("R8", arch::x86_64::RegX86_64::R8),
+                    ("R9", arch::x86_64::RegX86_64::R9),
+                    ("R10", arch::x86_64::RegX86_64::R10),
+                    ("R11", arch::x86_64::RegX86_64::R11),
+                    ("R12", arch::x86_64::RegX86_64::R12),
+                    ("R13", arch::x86_64::RegX86_64::R13),
+                    ("R14", arch::x86_64::RegX86_64::R14),
+                    ("R15", arch::x86_64::RegX86_64::R15),
+                    ("RIP", arch::x86_64::RegX86_64::RIP),
+                    ("EFLAGS", arch::x86_64::RegX86_64::EFLAGS),
+                ];
+                for (name, reg) in regs {
+                    let value = self
+                        .arch
+                        .regs
+                        .get_reg(&mut self.uc, arch::regs::VRegister::X86_64(reg));
+                    match value {
+                        Ok(val) => {
+                            let _ = writeln!(report, "{name:>6} = {val:#018x}");
+                        }
+                        Err(err) => {
+                            let _ = writeln!(report, "{name:>6} = <err {err}>");
+                        }
+                    }
+                }
+            }
+        }
+
+        let _ = writeln!(
+            report,
+            "{color_cyan}== Instructions around PC =={color_reset}"
+        );
+        let insn_size = 0x20;
+        let (insn_base, insn_size) = if let Some(region) = self.mem.region_for(pc) {
+            let base = pc.saturating_sub(0x10).max(region.start);
+            let region_end = region.start + region.size;
+            let max_size = region_end.saturating_sub(base) as usize;
+            (base, insn_size.min(max_size))
+        } else {
+            (pc.saturating_sub(0x10), insn_size)
+        };
+        match self.mem.disassemble(&mut self.uc, insn_base, insn_size) {
+            Ok(insns) => {
+                for insn in insns {
+                    let _ = writeln!(report, "\t{insn}");
+                }
+            }
+            Err(err) => {
+                let _ = writeln!(report, "disassembly failed: {err}");
+            }
+        }
+
+        let _ = writeln!(report, "{color_cyan}== Stack dump =={color_reset}");
+        let stack_dump_size = 0x40;
+        let stack_dump_size = if let Some(region) = self.mem.region_for(sp) {
+            let region_end = region.start + region.size;
+            let max_size = region_end.saturating_sub(sp) as usize;
+            stack_dump_size.min(max_size)
+        } else {
+            stack_dump_size
+        };
+        if stack_dump_size == 0 {
+            let _ = writeln!(report, "stack dump skipped: empty range");
+        } else {
+            match self.mem.read(&mut self.uc, sp, stack_dump_size) {
+                Ok(bytes) => {
+                    let ptr_size = (self.cfg.archsize / 8) as usize;
+                    for (i, chunk) in bytes.chunks(ptr_size).enumerate() {
+                        let addr = sp + (i * ptr_size) as u64;
+                        let mut value = 0u64;
+                        for (shift, b) in chunk.iter().enumerate() {
+                            value |= (*b as u64) << (shift * 8);
+                        }
+                        let _ = writeln!(report, "\t{addr:#x}: {value:#x}");
+                    }
+                }
+                Err(err) => {
+                    let _ = writeln!(report, "stack read failed: {err}");
+                }
+            }
+        }
+        panic!("{report}");
     }
 
     fn setup_trap(&mut self) -> Result<()> {

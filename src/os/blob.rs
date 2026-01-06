@@ -47,12 +47,14 @@ impl Os for OsBlob {
             vk.cfg.entry_point, vk.cfg.exit_point
         ));
 
-        vk.uc.emu_start(
+        if let Err(err) = vk.uc.emu_start(
             vk.cfg.entry_point,
             vk.cfg.exit_point,
             vk.cfg.timeout,
             vk.cfg.count,
-        )?;
+        ) {
+            vk.panic_with_unicorn_context(err);
+        }
         vk.vstate = VState::Ended;
         Ok(())
     }

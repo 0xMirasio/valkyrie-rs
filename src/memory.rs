@@ -104,6 +104,12 @@ impl VMemory {
         }
     }
 
+    pub fn region_for(&self, addr: u64) -> Option<&VMemRegion> {
+        self.regions
+            .iter()
+            .find(|region| addr >= region.start && addr < region.start + region.size)
+    }
+
     pub fn show_instructions<D>(
         &self,
         uc: &mut Unicorn<'_, D>,

@@ -23,6 +23,8 @@ pub struct ValkyrieConfig {
     pub count: usize,            // program instruction max count
     pub timeout: u64,            // program execution max timeout
     pub disassemble: bool,       // disassemble execution
+    pub debug: bool,             // debug mode
+    pub debug_port: u16,         // debug server port
 }
 
 // implement a new ValkyrieConfig.
@@ -62,6 +64,8 @@ impl ValkyrieConfig {
             count: usize::MAX, // no instructions limit
             timeout: u64::MAX, // no timeout limit
             disassemble: false,
+            debug: false,
+            debug_port: 1234,
         })
     }
 
@@ -86,9 +90,21 @@ impl ValkyrieConfig {
         self
     }
 
-    //set ValkyrieConfig::disassemble
+    //setter ValkyrieConfig::disassemble
     pub fn disassemble(mut self, value: bool) -> Self {
         self.disassemble = value;
+        self
+    }
+
+    // setter ValkyrieConfig::debug
+    pub fn debug(mut self, value: bool) -> Self {
+        self.debug = value;
+        self
+    }
+
+    // setter ValkyrieConfig::debug_port
+    pub fn debug_port(mut self, value: u16) -> Self {
+        self.debug_port = value;
         self
     }
 
