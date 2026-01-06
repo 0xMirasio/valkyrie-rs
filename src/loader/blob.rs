@@ -4,7 +4,7 @@ use crate::arch::x86::RegX86;
 use crate::arch::x86_64::RegX86_64;
 use crate::error::{Result, ValkyrieError};
 use crate::loader::Loader;
-use crate::util::Logger;
+use crate::logger::Logger;
 use crate::vtype::Arch;
 
 use unicorn_engine::unicorn_const::Prot;

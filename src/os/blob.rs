@@ -1,7 +1,7 @@
 use crate::Valkyrie;
 use crate::error::Result;
+use crate::logger::Logger;
 use crate::os::Os;
-use crate::util::Logger;
 use crate::vtype::VState;
 
 #[derive(Debug, Clone)]

@@ -14,11 +14,40 @@ pub enum VRegister {
 #[derive(Debug, Clone)]
 pub struct VRegs {
     arch: Arch,
+    pub pc: VRegister,
+    pub sp: VRegister,
 }
 
 impl VRegs {
     pub fn new(arch: Arch) -> Self {
-        Self { arch }
+        let (pc, sp) = match arch {
+            Arch::X86_64 => (
+                VRegister::X86_64(x86_64::RegX86_64::RIP),
+                VRegister::X86_64(x86_64::RegX86_64::RSP),
+            ),
+            Arch::X86 => (
+                VRegister::X86(x86::RegX86::EIP),
+                VRegister::X86(x86::RegX86::ESP),
+            ),
+        };
+
+        Self { arch, pc, sp }
+    }
+
+    pub fn get_pc<D>(&self, uc: &mut Unicorn<'_, D>) -> Result<u64> {
+        self.get_reg(uc, self.pc)
+    }
+
+    pub fn set_pc<D>(&self, uc: &mut Unicorn<'_, D>, value: u64) -> Result<()> {
+        self.set_reg(uc, self.pc, value)
+    }
+
+    pub fn get_sp<D>(&self, uc: &mut Unicorn<'_, D>) -> Result<u64> {
+        self.get_reg(uc, self.sp)
+    }
+
+    pub fn set_sp<D>(&self, uc: &mut Unicorn<'_, D>, value: u64) -> Result<()> {
+        self.set_reg(uc, self.sp, value)
     }
 
     pub fn set_reg<D>(&self, uc: &mut Unicorn<'_, D>, reg: VRegister, value: u64) -> Result<()> {

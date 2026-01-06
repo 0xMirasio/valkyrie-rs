@@ -3,6 +3,7 @@ pub mod config;
 pub mod error;
 pub mod hook;
 pub mod loader;
+pub mod logger;
 pub mod memory;
 pub mod os;
 pub mod util;
@@ -19,8 +20,8 @@ pub use vstruct::VCoreStructs;
 pub use vtype::VState;
 
 use error::ValkyrieError;
+use logger::Logger;
 use unicorn_engine::Unicorn;
-use util::Logger;
 use vtype::Arch;
 
 use std::fmt::Write;

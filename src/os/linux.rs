@@ -1,7 +1,7 @@
 use crate::Valkyrie;
 use crate::error::Result;
+use crate::logger::Logger;
 use crate::os::Os;
-use crate::util::Logger;
 use crate::vtype::VState;
 
 // right now Linux OS is identical to Blob OS, but we define it separately for future extensions

@@ -1,7 +1,11 @@
 use unicorn_engine::Unicorn;
 use unicorn_engine::unicorn_const::RegisterX86;
 
+use crate::Valkyrie;
+use crate::arch::regs::VRegister;
 use crate::error::Result;
+use crate::logger::Logger;
+use crate::os::register_syscall::{SubCtx, dispatch_syscall_by_name, syscall_name_from_no};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RegX86 {
@@ -207,7 +211,6 @@ fn to_uc(reg: RegX86) -> RegisterX86 {
         RegX86::ST6 => RegisterX86::ST6,
         RegX86::ST7 => RegisterX86::ST7,
 
-        // XMM
         RegX86::XMM0 => RegisterX86::XMM0,
         RegX86::XMM1 => RegisterX86::XMM1,
         RegX86::XMM2 => RegisterX86::XMM2,
@@ -241,7 +244,6 @@ fn to_uc(reg: RegX86) -> RegisterX86 {
         RegX86::XMM30 => RegisterX86::XMM30,
         RegX86::XMM31 => RegisterX86::XMM31,
 
-        // YMM
         RegX86::YMM0 => RegisterX86::YMM0,
         RegX86::YMM1 => RegisterX86::YMM1,
         RegX86::YMM2 => RegisterX86::YMM2,
@@ -275,7 +277,6 @@ fn to_uc(reg: RegX86) -> RegisterX86 {
         RegX86::YMM30 => RegisterX86::YMM30,
         RegX86::YMM31 => RegisterX86::YMM31,
 
-        // ZMM
         RegX86::ZMM0 => RegisterX86::ZMM0,
         RegX86::ZMM1 => RegisterX86::ZMM1,
         RegX86::ZMM2 => RegisterX86::ZMM2,
@@ -312,10 +313,99 @@ fn to_uc(reg: RegX86) -> RegisterX86 {
 }
 
 pub fn set_reg<D>(uc: &mut Unicorn<'_, D>, reg: RegX86, value: u64) -> Result<()> {
-    uc.reg_write(to_uc(reg), value)?;
+    // 32-bit regs: on tronque
+    uc.reg_write(to_uc(reg), value as u32 as u64)?;
     Ok(())
 }
 
 pub fn get_reg<D>(uc: &mut Unicorn<'_, D>, reg: RegX86) -> Result<u64> {
-    Ok(uc.reg_read(to_uc(reg))?)
+    Ok(uc.reg_read(to_uc(reg))? as u32 as u64)
+}
+
+pub fn handle_x86_syscall(vk: &mut Valkyrie, addr: u64, size: u32) -> Result<()> {
+    // int 0x80 = 0xCD 0x80
+    let insn = vk.mem.read(&mut vk.uc, addr, 2)?;
+    if insn != [0xCD, 0x80] {
+        return Ok(());
+    }
+
+    // Linux i386 int 0x80 ABI:
+    // eax = no, ebx/ecx/edx/esi/edi/ebp = args
+    let syscall_no = vk
+        .arch
+        .regs
+        .get_reg(&mut vk.uc, VRegister::X86(RegX86::EAX))?;
+    let arg0 = vk
+        .arch
+        .regs
+        .get_reg(&mut vk.uc, VRegister::X86(RegX86::EBX))?;
+    let arg1 = vk
+        .arch
+        .regs
+        .get_reg(&mut vk.uc, VRegister::X86(RegX86::ECX))?;
+    let arg2 = vk
+        .arch
+        .regs
+        .get_reg(&mut vk.uc, VRegister::X86(RegX86::EDX))?;
+    let arg3 = vk
+        .arch
+        .regs
+        .get_reg(&mut vk.uc, VRegister::X86(RegX86::ESI))?;
+    let arg4 = vk
+        .arch
+        .regs
+        .get_reg(&mut vk.uc, VRegister::X86(RegX86::EDI))?;
+    let arg5 = vk
+        .arch
+        .regs
+        .get_reg(&mut vk.uc, VRegister::X86(RegX86::EBP))?;
+
+    let name = match syscall_name_from_no(syscall_no, vk.cfg.arch) {
+        Ok(n) => n,
+        Err(_) => {
+            Logger::warning(format!("x86 syscall: unknown syscall no={syscall_no}"));
+            vk.arch
+                .regs
+                .set_reg(&mut vk.uc, VRegister::X86(RegX86::EAX), 0)?;
+            let step = if size == 0 { 2 } else { size as u64 };
+            vk.arch.regs.set_reg(
+                &mut vk.uc,
+                VRegister::X86(RegX86::EIP),
+                addr.saturating_add(step),
+            )?;
+            return Ok(());
+        }
+    };
+
+    Logger::debug(
+        format!(
+            "x86 syscall: no={syscall_no} ({name}) [ebx={arg0:#x}, ecx={arg1:#x}, edx={arg2:#x}]"
+        ),
+        vk.cfg.verbose,
+    );
+
+    let mut subctx = SubCtx::new([arg0, arg1, arg2, arg3, arg4, arg5]);
+
+    let result = match dispatch_syscall_by_name(name, vk, &mut subctx) {
+        Ok(v) => v,
+        Err(e) => {
+            Logger::warning(format!(
+                "x86 syscall: failed to handle syscall no={syscall_no} ({name}) | err={e:?}"
+            ));
+            0
+        }
+    };
+
+    vk.arch
+        .regs
+        .set_reg(&mut vk.uc, VRegister::X86(RegX86::EAX), result)?;
+
+    let step = if size == 0 { 2 } else { size as u64 };
+    vk.arch.regs.set_reg(
+        &mut vk.uc,
+        VRegister::X86(RegX86::EIP),
+        addr.saturating_add(step),
+    )?;
+
+    Ok(())
 }

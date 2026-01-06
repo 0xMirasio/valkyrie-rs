@@ -2,7 +2,7 @@ use std::path::Path;
 
 use valkyrie_rs::arch::regs::VRegister;
 use valkyrie_rs::arch::x86_64::RegX86_64;
-use valkyrie_rs::util::Logger;
+use valkyrie_rs::logger::Logger;
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
 

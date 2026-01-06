@@ -4,8 +4,8 @@ use unicorn_engine::unicorn_const::RegisterX86;
 use crate::Valkyrie;
 use crate::arch::regs::VRegister;
 use crate::error::Result;
+use crate::logger::Logger;
 use crate::os::register_syscall::{SubCtx, dispatch_syscall_by_name, syscall_name_from_no};
-use crate::util::Logger;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RegX86_64 {

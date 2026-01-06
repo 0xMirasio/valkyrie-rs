@@ -1,6 +1,7 @@
+use crate::Valkyrie;
 use crate::config::ValkyrieConfig;
 use crate::error::{Result, ValkyrieError};
-use crate::util::Logger;
+use crate::logger::Logger;
 use crate::vtype::Arch;
 
 use capstone::arch::x86::{ArchMode, ArchSyntax};
@@ -101,6 +102,60 @@ impl VMemory {
                 r.prot,
                 r.info
             ));
+        }
+    }
+
+    pub fn dump_stacks(vk: &mut Valkyrie) {
+        Logger::info("== Stack memory dump ==");
+
+        let sp = match vk.arch.regs.get_sp(&mut vk.uc) {
+            Ok(v) => v,
+            Err(e) => {
+                Logger::warning(format!("dump_stacks(): failed to read SP: {e}"));
+                return;
+            }
+        };
+
+        if sp == 0 {
+            Logger::warning("dump_stacks(): SP is 0");
+            return;
+        }
+
+        let start = sp.saturating_sub(16);
+        let end = sp.saturating_add(16);
+        let len = (end - start) as usize;
+
+        let buf = match vk.mem.read(&mut vk.uc, start, len) {
+            Ok(b) => b,
+            Err(e) => {
+                Logger::warning(format!("dump_stacks(): mem.read failed at {start:#x}: {e}"));
+                return;
+            }
+        };
+
+        println!("SP: {sp:#x} | dumping [{start:#x}..{end:#x}]");
+
+        for (i, chunk) in buf.chunks(16).enumerate() {
+            let addr = start + (i * 16) as u64;
+
+            let hex = chunk
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let ascii = chunk
+                .iter()
+                .map(|&b| {
+                    if b.is_ascii_graphic() || b == b' ' {
+                        b as char
+                    } else {
+                        '.'
+                    }
+                })
+                .collect::<String>();
+
+            println!("{addr:#018x}: {hex:<47} |{ascii}|");
         }
     }
 

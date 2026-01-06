@@ -1,7 +1,7 @@
 pub use crate::arch;
 pub use crate::error::ValkyrieError;
 pub use crate::hook::VCoreHooks;
-pub use crate::util::Logger;
+pub use crate::logger::Logger;
 pub use crate::vstruct::VCoreStructs;
 pub use crate::vtype::{Arch, Endianess, LoaderType, OsType, PAGE_SIZE, VState};
 

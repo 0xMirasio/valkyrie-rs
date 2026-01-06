@@ -1,19 +1,25 @@
 use std::path::Path;
 
+use valkyrie_rs::VMemory;
 use valkyrie_rs::arch::regs::VRegister;
 use valkyrie_rs::arch::x86_64::RegX86_64;
-use valkyrie_rs::util::Logger;
+use valkyrie_rs::logger::Logger;
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
 
-pub const HELLO_WRITE_X86_64: [u8; 28] = [
+// write(1, "hello, world!\n", 14)
+pub const HELLO_WRITE_X86_64: [u8; 53] = [
     0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1        ; SYS_write
     0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1        ; fd=stdout
-    0x6A, 0x68, // push 0x68         ; 'h'
-    0x48, 0x89, 0xE6, // mov rsi, rsp   ; buf=rsp
-    0xBA, 0x01, 0x00, 0x00, 0x00, // mov edx, 1        ; len = 1
+    0x48, 0x83, 0xEC, 0x10, // sub rsp, 0x10
+    0x48, 0xBB, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x77, // mov rbx, 0x77202c6f6c6c6568
+    0x48, 0x89, 0x1C, 0x24, // mov [rsp], rbx
+    0x48, 0xBB, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x0a, 0x00,
+    0x00, // mov rbx, 0x0000000a21646c726f
+    0x48, 0x89, 0x5C, 0x24, 0x08, // mov [rsp+8], rbx
+    0x48, 0x89, 0xE6, // mov rsi, rsp
+    0xBA, 0x0E, 0x00, 0x00, 0x00, // mov edx, 14
     0x0F, 0x05, // syscall
-    0xC7, 0x00, 0x04, 0x00, 0x00, 0x00, // mov dword ptr [rax], 4 (maked crash here)
 ];
 
 fn main() {
@@ -48,5 +54,6 @@ fn main() {
     vk.mem.show_mappings();
 
     vk.run().unwrap();
+    VMemory::dump_stacks(&mut vk);
     Logger::success("Valkyrie : done");
 }
