@@ -3,7 +3,7 @@ pub use crate::error::ValkyrieError;
 pub use crate::hook::VCoreHooks;
 pub use crate::util::Logger;
 pub use crate::vstruct::VCoreStructs;
-pub use crate::vtype::{Arch, Endianess, OsType, PAGE_SIZE, VState};
+pub use crate::vtype::{Arch, Endianess, LoaderType, OsType, PAGE_SIZE, VState};
 
 use std::path::Path;
 
@@ -11,6 +11,7 @@ use std::path::Path;
 pub struct ValkyrieConfig {
     pub arch: Arch,              // arch
     pub os: OsType,              // os
+    pub loader: LoaderType,      // loader
     pub rootfs: String,          // rootfspath
     pub verbose: bool,           // verbosity
     pub endianess: Endianess,    // endianess
@@ -52,6 +53,7 @@ impl ValkyrieConfig {
         Ok(Self {
             arch,
             os,
+            loader: LoaderType::Raw,
             rootfs,
             verbose: false,
             endianess,
@@ -74,13 +76,15 @@ impl ValkyrieConfig {
         if code.is_empty() {
             return Err(ValkyrieError::BadConfig("baremetal code must be non-empty"));
         }
+        self.loader = LoaderType::Raw;
         self.baremetal_code.clear();
         self.baremetal_code.extend_from_slice(code);
         Ok(self)
     }
 
     /// TODO : ELF feed
-    pub fn feed_elf(self, _elf_bytes: &[u8]) -> Result<Self, ValkyrieError> {
+    pub fn feed_elf(mut self, _elf_bytes: &[u8]) -> Result<Self, ValkyrieError> {
+        self.loader = LoaderType::Elf;
         Err(ValkyrieError::NotImplemented("ELF loading not implemented"))
     }
 

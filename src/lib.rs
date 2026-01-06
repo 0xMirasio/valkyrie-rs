@@ -78,7 +78,7 @@ impl Valkyrie {
             initial_sp: 0,
         };
 
-        let mut ldr = loader::select_loader(vk.cfg.os)?;
+        let mut ldr = loader::select_loader(vk.cfg.loader)?;
         ldr.run(&mut vk)?;
 
         vk.os.set_loader_info(
@@ -148,6 +148,7 @@ impl Valkyrie {
 
     pub fn run(&mut self) -> Result<()> {
         self.refresh_ctx_ptr();
+        os::register_syscall::install_syscall_hook(self)?;
         self.setup_trap()?;
         self.write_exit_trap()?;
 

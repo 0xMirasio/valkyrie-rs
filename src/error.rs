@@ -37,6 +37,12 @@ pub enum ValkyrieError {
 
     #[error("disassembler error: {0}")]
     Disassembler(&'static str),
+
+    #[error("unknown syscall number: {0}")]
+    UnknownSyscall(u64),
+
+    #[error("unknown syscall name: {0}")]
+    UnknownSyscallName(String),
 }
 
 /// struct errors d'unpack

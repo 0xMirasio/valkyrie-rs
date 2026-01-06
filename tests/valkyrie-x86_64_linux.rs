@@ -7,9 +7,13 @@ use valkyrie_rs::vtype::{Arch, OsType};
 
 static PROJECT_ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
-pub const SAMPLE_X86_64: [u8; 10] = [
-    0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
-    0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
+pub const HELLO_WRITE_X86_64: [u8; 22] = [
+    0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1        ; SYS_write
+    0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1        ; fd=stdout
+    0x6A, 0x68, // push 0x68         ; 'h'
+    0x48, 0x89, 0xE6, // mov rsi, rsp   ; buf=rsp
+    0xBA, 0x01, 0x00, 0x00, 0x00, // mov edx, 1        ; len = 1
+    0x0F, 0x05, // syscall
 ];
 
 #[test]
@@ -18,11 +22,11 @@ fn integration_new() {
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,
-        OsType::BareMetal,
+        OsType::Linux,
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .feed_baremetal(&SAMPLE_X86_64)
+    .feed_baremetal(&HELLO_WRITE_X86_64)
     .unwrap()
     .disassemble(true)
     .verbose(true);
