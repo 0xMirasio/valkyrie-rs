@@ -1,0 +1,6 @@
+[submodule "rootfs"]
+	path = rootfs
+	url = https://github.com/qilingframework/rootfs
+[submodule "external/udbserver"]
+	path = external/udbserver
+	url = https://github.com/bet4it/udbserver.git

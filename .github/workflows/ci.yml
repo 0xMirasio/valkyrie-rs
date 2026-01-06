@@ -2,15 +2,19 @@ name: Rust CI
 
 on:
   push:
+    branches:
+      - main
+      - dev
   pull_request:
-
 jobs:
   ci:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -25,3 +29,12 @@ jobs:
 
       - name: Cargo test
         run: cargo test --all --locked
+
+      - name: Build release library artifacts
+        run: cargo build --release --locked
+
+      - name: Upload valkyrie library
+        uses: actions/upload-artifact@v4
+        with:
+          name: valkyrie-libs
+          path: target/release/libvalkyrie_rs.so
