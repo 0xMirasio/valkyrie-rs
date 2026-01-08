@@ -158,6 +158,7 @@ impl Valkyrie {
         os_runner.run(self)
     }
 
+    //  TODO : rewrite this function using geneirc arch.sp / arch.pc instead of matching arch to get the right registers
     pub fn panic_with_unicorn_context(
         &mut self,
         err: unicorn_engine::unicorn_const::uc_error,
