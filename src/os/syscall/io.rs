@@ -102,6 +102,51 @@ pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 }
 
+//Todo : write good impl
+pub fn sys_openat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    // openat(int dirfd, const char *pathname, int flags, mode_t mode)
+    let _dirfd = sctx.arg0() as i64 as i32;
+    let path_ptr = sctx.arg1();
+    let flags = sctx.arg2();
+    let _mode = sctx.arg3();
+
+    // Read pathname from emulated memory
+    let path = read_guest_cstring(vk, path_ptr)?;
+    let host_path = resolve_guest_path(vk, &path);
+
+    let mut options = OpenOptions::new();
+    let read = flags & O_RDWR != 0 || flags & O_WRONLY == 0;
+    let write = flags & (O_WRONLY | O_RDWR) != 0;
+
+    options.read(read).write(write);
+
+    if flags & O_CREAT != 0 {
+        options.create(true);
+    }
+    if flags & O_TRUNC != 0 {
+        options.truncate(true);
+    }
+    if flags & O_APPEND != 0 {
+        options.append(true);
+    }
+
+    match options.open(&host_path) {
+        Ok(file) => {
+            let mut table = fd_table().lock().unwrap();
+            let fd = table.next_fd;
+            table.next_fd += 1;
+            table.files.insert(fd, file);
+            return Ok(fd);
+        }
+        Err(err) => {
+            Logger::warning(format!(
+                "sys_openat: failed to open {host_path:?} (guest path: {path:?}): {err}",
+            ));
+            return Ok(u64::MAX);
+        }
+    }
+}
+
 pub fn sys_write(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let fd = sctx.arg0();
     let buf_addr = sctx.arg1();

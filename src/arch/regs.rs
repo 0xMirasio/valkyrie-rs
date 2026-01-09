@@ -12,10 +12,17 @@ pub enum VRegister {
 }
 
 #[derive(Debug, Clone)]
+pub struct RegUpdate {
+    pub reg: VRegister,
+    pub value: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct VRegs {
     arch: Arch,
     pub pc: VRegister,
     pub sp: VRegister,
+    last_reg_update: Vec<RegUpdate>,
 }
 
 impl VRegs {
@@ -31,14 +38,25 @@ impl VRegs {
             ),
         };
 
-        Self { arch, pc, sp }
+        let last_reg_update: Vec<RegUpdate> = Vec::new();
+
+        Self {
+            arch,
+            pc,
+            sp,
+            last_reg_update,
+        }
+    }
+
+    pub fn take_reg_updates(&mut self) -> Vec<RegUpdate> {
+        std::mem::take(&mut self.last_reg_update)
     }
 
     pub fn get_pc<D>(&self, uc: &mut Unicorn<'_, D>) -> Result<u64> {
         self.get_reg(uc, self.pc)
     }
 
-    pub fn set_pc<D>(&self, uc: &mut Unicorn<'_, D>, value: u64) -> Result<()> {
+    pub fn set_pc<D>(&mut self, uc: &mut Unicorn<'_, D>, value: u64) -> Result<()> {
         self.set_reg(uc, self.pc, value)
     }
 
@@ -46,18 +64,30 @@ impl VRegs {
         self.get_reg(uc, self.sp)
     }
 
-    pub fn set_sp<D>(&self, uc: &mut Unicorn<'_, D>, value: u64) -> Result<()> {
+    pub fn set_sp<D>(&mut self, uc: &mut Unicorn<'_, D>, value: u64) -> Result<()> {
         self.set_reg(uc, self.sp, value)
     }
 
-    pub fn set_reg<D>(&self, uc: &mut Unicorn<'_, D>, reg: VRegister, value: u64) -> Result<()> {
-        match (self.arch, reg) {
+    pub fn set_reg<D>(
+        &mut self,
+        uc: &mut Unicorn<'_, D>,
+        reg: VRegister,
+        value: u64,
+    ) -> Result<()> {
+        let _ = match (self.arch, reg) {
             (Arch::X86, VRegister::X86(r)) => x86::set_reg(uc, r, value),
             (Arch::X86_64, VRegister::X86_64(r)) => x86_64::set_reg(uc, r, value),
-            _ => Err(ValkyrieError::NotImplemented(
-                "set_reg not implemented for this arch",
-            )),
+            _ => {
+                return Err(ValkyrieError::NotImplemented(
+                    "set_reg not implemented for this arch",
+                ));
+            }
+        };
+
+        if reg != self.pc {
+            self.last_reg_update.push(RegUpdate { reg, value });
         }
+        Ok(())
     }
 
     pub fn get_reg<D>(&self, uc: &mut Unicorn<'_, D>, reg: VRegister) -> Result<u64> {

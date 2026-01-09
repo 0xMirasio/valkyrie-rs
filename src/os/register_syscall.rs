@@ -55,6 +55,7 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("write", sys_write),
     ("close", sys_close),
     ("exit", sys_exit),
+    ("openat", sys_openat),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {
@@ -93,6 +94,7 @@ pub fn syscall_fn_from_name(name: &str) -> Option<SysFn> {
 
 pub fn install_syscall_hook(vk: &mut Valkyrie) -> Result<()> {
     if vk.cfg.os == OsType::BareMetal {
+        Logger::warning("OsType == BareMetal. Syscall handling won't be enabled.");
         return Ok(());
     }
 

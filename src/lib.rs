@@ -99,7 +99,7 @@ impl Valkyrie {
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             vk.udb_uc = Some(Box::new(udb_uc));
             if let Some(udb_uc) = vk.udb_uc.as_mut() {
-                udbserver::udbserver(udb_uc.as_mut(), vk.cfg.debug_port, ldr.load_address())
+                udbserver::udbserver(&mut vk.uc, vk.cfg.debug_port, ldr.load_address())
                     .map_err(|e| std::io::Error::other(e.to_string()))?;
             }
         }
@@ -130,8 +130,7 @@ impl Valkyrie {
                     &mut self.uc,
                     |vk: &mut Valkyrie, addr: u64, size: u32, _ud: Option<&mut ()>| {
                         if size != 0
-                            && let Err(e) =
-                                vk.mem.show_instructions(&mut vk.uc, addr, size as usize)
+                            && let Err(e) = VMemory::show_instructions(vk, addr, size as usize)
                         {
                             Logger::warning(format!("disassembly failed at {addr:#x}: {e}"));
                         }
