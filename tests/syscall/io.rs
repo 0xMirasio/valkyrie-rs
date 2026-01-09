@@ -140,12 +140,11 @@ fn integration_syscall_multiple_io_x86_64_linux() {
     assert_eq!(trapped, trap_addr);
 
     let p = Path::new("/tmp/.f");
-    assert!(p.exists(), "expected {:?} to exist after vk.run()", p);
+    assert!(p.exists(), "expected {p:?} to exist after vk.run()");
 
     let content = fs::read(p).expect("failed to read /tmp/.f");
     assert_eq!(
         content, b"test",
-        "unexpected content in /tmp/.f: {:?}",
-        content
+        "unexpected content in /tmp/.f: {content:?}"
     );
 }

@@ -15,3 +15,4 @@ thiserror = "1"
 unicorn-engine = { version = "2.1.4", features = ["dynamic_linkage"] }
 capstone="0.13.0"
 udbserver= { path = "external/udbserver" }
+libc = "0.2.180"

@@ -1,12 +1,12 @@
 pub mod arch;
 pub mod config;
 pub mod error;
+pub mod fs;
 pub mod hook;
 pub mod loader;
 pub mod logger;
 pub mod memory;
 pub mod os;
-pub mod util;
 pub mod vstruct;
 pub mod vtype;
 
@@ -99,7 +99,7 @@ impl Valkyrie {
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             vk.udb_uc = Some(Box::new(udb_uc));
             if let Some(udb_uc) = vk.udb_uc.as_mut() {
-                udbserver::udbserver(&mut vk.uc, vk.cfg.debug_port, ldr.load_address())
+                udbserver::udbserver(udb_uc, vk.cfg.debug_port, ldr.load_address())
                     .map_err(|e| std::io::Error::other(e.to_string()))?;
             }
         }
@@ -157,27 +157,15 @@ impl Valkyrie {
         os_runner.run(self)
     }
 
-    //  TODO : rewrite this function using geneirc arch.sp / arch.pc instead of matching arch to get the right registers
     pub fn panic_with_unicorn_context(
         &mut self,
         err: unicorn_engine::unicorn_const::uc_error,
     ) -> ! {
-        let pc_reg: arch::regs::VRegister;
-        let sp_reg: arch::regs::VRegister;
+        let pc_reg = self.arch.regs.pc;
+        let sp_reg = self.arch.regs.sp;
         let color_red = "\u{1b}[1;31m";
         let color_cyan = "\u{1b}[1;36m";
         let color_reset = "\u{1b}[0m";
-
-        match self.cfg.arch {
-            Arch::X86 => {
-                pc_reg = arch::regs::VRegister::X86(arch::x86::RegX86::EIP);
-                sp_reg = arch::regs::VRegister::X86(arch::x86::RegX86::ESP);
-            }
-            Arch::X86_64 => {
-                pc_reg = arch::regs::VRegister::X86_64(arch::x86_64::RegX86_64::RIP);
-                sp_reg = arch::regs::VRegister::X86_64(arch::x86_64::RegX86_64::RSP);
-            }
-        }
 
         let pc = self.arch.regs.get_reg(&mut self.uc, pc_reg).unwrap_or(0);
         let sp = self.arch.regs.get_reg(&mut self.uc, sp_reg).unwrap_or(0);

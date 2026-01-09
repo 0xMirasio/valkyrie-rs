@@ -1,3 +1,4 @@
+use std::fmt;
 use thiserror::Error;
 use unicorn_engine;
 
@@ -43,6 +44,9 @@ pub enum ValkyrieError {
 
     #[error("unknown syscall name: {0}")]
     UnknownSyscallName(String),
+
+    #[error("file system error: {0}")]
+    FsError(FsError),
 }
 
 /// struct errors d'unpack
@@ -50,4 +54,27 @@ pub enum ValkyrieError {
 pub enum StructError {
     UnsupportedBitness,
     BufferTooSmall { expected: usize, got: usize },
+}
+
+#[derive(Debug)]
+pub enum FsError {
+    FileAlreadyHasFd(u64),
+    SocketAlreadyHasFd(u64),
+    NoFileAtFd(u64),
+    PoisonedFdTable,
+    CurrentDirError,
+}
+
+impl fmt::Display for FsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FsError::FileAlreadyHasFd(fd) => write!(f, "file already exists at fd {fd}"),
+            FsError::SocketAlreadyHasFd(fd) => {
+                write!(f, "socket already exists at fd {fd}")
+            }
+            FsError::NoFileAtFd(fd) => write!(f, "no file at fd {fd}"),
+            FsError::PoisonedFdTable => write!(f, "fd table mutex is poisoned"),
+            FsError::CurrentDirError => write!(f, "failed to get current directory"),
+        }
+    }
 }

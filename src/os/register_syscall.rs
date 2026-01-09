@@ -56,6 +56,9 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("close", sys_close),
     ("exit", sys_exit),
     ("openat", sys_openat),
+    ("renameat2", sys_renameat2),
+    ("renameat", sys_renameat),
+    ("statx", sys_statx),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {

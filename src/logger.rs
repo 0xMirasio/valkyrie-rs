@@ -68,9 +68,8 @@ impl Logger {
         Self::log(LogLevel::Warning, msg);
     }
 
-    pub fn error(msg: impl fmt::Display) -> ! {
+    pub fn error(msg: impl fmt::Display) {
         Self::log(LogLevel::Error, msg);
-        unreachable!()
     }
 
     pub fn debug(msg: impl fmt::Display, verbose: bool) {
