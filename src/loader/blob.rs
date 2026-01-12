@@ -49,7 +49,7 @@ impl Loader for LoaderBlob {
         vk.mem.heap_addr_start = heap_addr;
         vk.mem.heap_addr_exit = heap_addr + heap_size;
 
-        vk.mem.tls_addr_start = vk.mem.heap_addr_exit + PAGE_SIZE as u64 & !0xfff;
+        vk.mem.tls_addr_start = (vk.mem.heap_addr_exit + PAGE_SIZE as u64) & !0xfff;
         vk.mem.tls_addr_exit = vk.mem.tls_addr_start + PAGE_SIZE as u64;
 
         if vk.cfg.verbose {

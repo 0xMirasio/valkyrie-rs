@@ -117,7 +117,7 @@ impl OsLinux {
             0,
             0,
             AT_PAGESZ as u32,
-            PAGE_SIZE as u32,
+            PAGE_SIZE,
             AT_RANDOM as u32,
             at_random_ptr as u32,
             AT_NULL as u32,
