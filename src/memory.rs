@@ -19,8 +19,14 @@ pub struct VMemRegion {
 
 #[derive(Debug)]
 pub struct VMemory {
-    regions: Vec<VMemRegion>,
+    pub regions: Vec<VMemRegion>,
     disassembler: Option<Capstone>,
+    pub heap_addr_start: u64,
+    pub heap_addr_exit: u64,
+    pub code_addr_start: u64,
+    pub code_addr_exit: u64,
+    pub tls_addr_start: u64,
+    pub tls_addr_exit: u64,
 }
 
 impl VMemory {
@@ -34,6 +40,12 @@ impl VMemory {
         Ok(Self {
             regions: Vec::new(),
             disassembler,
+            heap_addr_start: 0,
+            heap_addr_exit: 0,
+            code_addr_start: 0,
+            code_addr_exit: 0,
+            tls_addr_start: 0,
+            tls_addr_exit: 0,
         })
     }
 

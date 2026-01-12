@@ -5,6 +5,7 @@ pub use crate::logger::Logger;
 pub use crate::vstruct::VCoreStructs;
 pub use crate::vtype::{Arch, Endianess, LoaderType, OsType, PAGE_SIZE, VState};
 
+use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -21,11 +22,12 @@ pub struct ValkyrieConfig {
     pub exit_point: u64,         // program exit_point
     pub code_ram_size: u64,      // program ram size
     pub heap_size: u64,          // program heap size
-    pub count: usize,            // program instruction max count
-    pub timeout: u64,            // program execution max timeout
-    pub disassemble: bool,       // disassemble execution
-    pub debug: bool,             // debug mode
-    pub debug_port: u16,         // debug server port
+    pub code_base_address: u64,
+    pub count: usize,      // program instruction max count
+    pub timeout: u64,      // program execution max timeout
+    pub disassemble: bool, // disassemble execution
+    pub debug: bool,       // debug mode
+    pub debug_port: u16,   // debug server port
 }
 
 // implement a new ValkyrieConfig.
@@ -47,7 +49,7 @@ impl ValkyrieConfig {
 
         // todo : add profile management
 
-        let code_ram_size: u64 = (PAGE_SIZE as u64) * 1000; // 4000Kb default ram space
+        let code_ram_size: u64 = (PAGE_SIZE as u64) * 10000; // 40000Kb default ram space
         let heap_size: u64 = (PAGE_SIZE as u64) * 100; // 400kb default heap size
 
         Ok(Self {
@@ -63,8 +65,9 @@ impl ValkyrieConfig {
             exit_point: 0,
             code_ram_size,
             heap_size,
-            count: usize::MAX, // no instructions limit
-            timeout: u64::MAX, // no timeout limit
+            code_base_address: 0x400000, // TODO : this address must be set according to arch/size
+            count: usize::MAX,           // no instructions limit
+            timeout: u64::MAX,           // no timeout limit
             disassemble: false,
             debug: false,
             debug_port: 1234,
@@ -76,9 +79,51 @@ impl ValkyrieConfig {
         if code.is_empty() {
             return Err(ValkyrieError::BadConfig("baremetal code must be non-empty"));
         }
+
+        if code.len() as u64 > self.code_ram_size {
+            return Err(ValkyrieError::BadConfig(
+                "baremetal code exceeds cfg.code_ram_size, increase code_ram_size with .code_ram_size before calling feed_baremetal()",
+            ));
+        }
         self.loader = LoaderType::Raw;
         self.baremetal_code.clear();
         self.baremetal_code.extend_from_slice(code);
+
+        Ok(self)
+    }
+
+    // save code as file
+    pub fn feed_file<P: AsRef<Path>>(mut self, path: P) -> Result<Self, ValkyrieError> {
+        let path_ref: &Path = path.as_ref();
+
+        let meta = fs::metadata(path_ref).map_err(|e| {
+            ValkyrieError::BadConfig(Box::leak(
+                format!("file not accessible {}: {}", path_ref.display(), e).into_boxed_str(),
+            ))
+        })?;
+        if !meta.is_file() {
+            return Err(ValkyrieError::BadConfig("path is not a regular file"));
+        }
+
+        let code = fs::read(path_ref).map_err(|e| {
+            ValkyrieError::BadConfig(Box::leak(
+                format!("failed to read {}: {}", path_ref.display(), e).into_boxed_str(),
+            ))
+        })?;
+
+        if code.is_empty() {
+            return Err(ValkyrieError::BadConfig("baremetal code must be non-empty"));
+        }
+
+        if code.len() as u64 > self.code_ram_size {
+            return Err(ValkyrieError::BadConfig(
+                "code exceeds cfg.code_ram_size, increase code_ram_size with .code_ram_size before calling feed_file()",
+            ));
+        }
+
+        self.loader = LoaderType::Raw;
+        self.baremetal_code.clear();
+        self.baremetal_code.extend_from_slice(&code);
         Ok(self)
     }
 
@@ -127,6 +172,12 @@ impl ValkyrieConfig {
     // setter ValkyrieConfig::entry_point
     pub fn entry_point(mut self, value: u64) -> Self {
         self.entry_point = value;
+        self
+    }
+
+    // setter ValkyrieConfig::code_base_addr
+    pub fn code_base_addr(mut self, value: u64) -> Self {
+        self.code_base_address = value;
         self
     }
 

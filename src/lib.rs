@@ -26,6 +26,8 @@ use vtype::Arch;
 
 use std::fmt::Write;
 
+use crate::vtype::PAGE_SIZE;
+
 pub struct Valkyrie {
     cfg: ValkyrieConfig,
     pub vstruct: VCoreStructs,                     // VCoreStructs instance
@@ -82,10 +84,12 @@ impl Valkyrie {
         let mut ldr = loader::select_loader(vk.cfg.loader)?;
         ldr.run(&mut vk)?;
 
+        let require_exit_trap = ldr.skip_exit_check(&mut vk);
+
         vk.os.set_loader_info(
             ldr.load_address(),
             vk.cfg.baremetal_code.len() as u64,
-            ldr.skip_exit_check(),
+            require_exit_trap,
         );
 
         if vk.cfg.disassemble {
@@ -304,7 +308,11 @@ impl Valkyrie {
             return Ok(());
         }
 
-        let trap_addr: u64 = 0x0900_0000; // TODO : calculate dynamically this adress
+        if self.os.skip_exit_trap() {
+            return Ok(());
+        }
+
+        let trap_addr: u64 = self.mem.tls_addr_exit + PAGE_SIZE as u64;
         self.mem.map(
             &mut self.uc,
             trap_addr,
@@ -348,6 +356,9 @@ impl Valkyrie {
 
         let ptr_size = (self.cfg.archsize / 8) as usize;
         let trap_bytes = trap_addr.to_le_bytes();
+
+        println!("exit_trap_addr = 0x{trap_addr:x}, ptr_size={ptr_size:x}");
+        self.mem.show_mappings();
 
         self.mem
             .write(&mut self.uc, self.initial_sp, &trap_bytes[..ptr_size])

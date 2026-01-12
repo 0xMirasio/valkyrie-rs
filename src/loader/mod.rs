@@ -3,14 +3,17 @@ pub mod blob;
 
 use crate::Valkyrie;
 use crate::error::{Result, ValkyrieError};
-use crate::vtype::LoaderType;
+use crate::vtype::{LoaderType, OsType};
 
 pub trait Loader {
     fn run(&mut self, vk: &mut Valkyrie) -> Result<()>;
     fn load_address(&self) -> u64;
 
-    fn skip_exit_check(&self) -> bool {
-        false
+    fn skip_exit_check(&self, vk: &mut Valkyrie) -> bool {
+        match vk.cfg.os {
+            OsType::Linux => true,
+            OsType::BareMetal => false,
+        }
     }
 }
 
