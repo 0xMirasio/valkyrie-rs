@@ -6,6 +6,8 @@
 #include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <assert.h>
 
 static void die(const char *msg) {
     perror(msg);
@@ -52,5 +54,17 @@ int main(void) {
     }
 
     if (close(fd) < 0) die("close(/tmp/d)");
+
+    struct statx stx;
+    memset(&stx, 0, sizeof(stx));
+
+    if (statx(AT_FDCWD, "/tmp/d", AT_STATX_SYNC_AS_STAT, STATX_BASIC_STATS, &stx) < 0) {
+        perror("statx");
+        return 1;
+    }
+
+    assert((long long)stx.stx_size == 5);
+
+
     return 0;
 }

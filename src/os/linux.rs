@@ -35,7 +35,7 @@ impl OsLinux {
         vk.mem.map(
             &mut vk.uc,
             vk.mem.tls_addr_start,
-            PAGE_SIZE as u64,
+            (PAGE_SIZE * 4) as u64,
             Prot::READ | Prot::WRITE,
             "[tls]",
         )?;
@@ -44,13 +44,15 @@ impl OsLinux {
         vk.uc
             .mem_write(vk.mem.tls_addr_start + 0x28, &canary.to_le_bytes())?;
 
+        let fs_base = vk.mem.tls_addr_start + 2 * PAGE_SIZE as u64;
+
         vk.arch.regs.set_reg(
             &mut vk.uc,
             match vk.cfg.arch {
                 Arch::X86 => VRegister::X86(RegX86::FsBase),
                 Arch::X86_64 => VRegister::X86_64(RegX86_64::FsBase),
             },
-            vk.mem.tls_addr_start,
+            fs_base,
         )?;
         Ok(())
     }

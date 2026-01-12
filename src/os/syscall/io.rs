@@ -339,6 +339,10 @@ pub fn sys_statx(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
             )
         };
     }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("statx not supported on this platform. syscall will return -1;");
+    }
 
     if ret == -1 {
         return Ok(last_errno());

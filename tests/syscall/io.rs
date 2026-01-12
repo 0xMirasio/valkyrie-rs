@@ -58,10 +58,10 @@ fn io_multiple_x86_64_oslinux_fileloader() {
     )
     .unwrap()
     .verbose(true)
-    //.disassemble(true)
+    .disassemble(true)
     .code_base_addr(0x400000)
     .entry_point(0x401620)
-    .exit_point(0x40176e)
+    .exit_point(0x401781)
     .feed_file(io_bin_path)
     .unwrap();
 
