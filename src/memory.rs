@@ -19,8 +19,14 @@ pub struct VMemRegion {
 
 #[derive(Debug)]
 pub struct VMemory {
-    regions: Vec<VMemRegion>,
+    pub regions: Vec<VMemRegion>,
     disassembler: Option<Capstone>,
+    pub heap_addr_start: u64,
+    pub heap_addr_exit: u64,
+    pub code_addr_start: u64,
+    pub code_addr_exit: u64,
+    pub tls_addr_start: u64,
+    pub tls_addr_exit: u64,
 }
 
 impl VMemory {
@@ -34,6 +40,12 @@ impl VMemory {
         Ok(Self {
             regions: Vec::new(),
             disassembler,
+            heap_addr_start: 0,
+            heap_addr_exit: 0,
+            code_addr_start: 0,
+            code_addr_exit: 0,
+            tls_addr_start: 0,
+            tls_addr_exit: 0,
         })
     }
 
@@ -165,17 +177,12 @@ impl VMemory {
             .find(|region| addr >= region.start && addr < region.start + region.size)
     }
 
-    pub fn show_instructions<D>(
-        &self,
-        uc: &mut Unicorn<'_, D>,
-        addr: u64,
-        size: usize,
-    ) -> Result<()> {
+    pub fn show_instructions(vk: &mut Valkyrie, addr: u64, size: usize) -> Result<()> {
         if size == 0 {
             return Ok(());
         }
 
-        let insns = self.disassemble(uc, addr, size)?;
+        let insns = vk.mem.disassemble(&mut vk.uc, addr, size)?;
         if insns.is_empty() {
             Logger::warning(format!(
                 "disassembler produced no instructions at {addr:#x}"
@@ -183,8 +190,20 @@ impl VMemory {
             return Ok(());
         }
 
-        for insn in insns {
-            Logger::info(insn);
+        let pending_updates = vk.arch.regs.take_reg_updates();
+        for (i, insn) in insns.into_iter().enumerate() {
+            // On affiche les updates sur la prochaine instruction (la 1ère qu'on imprime ici)
+            if i == 0 && !pending_updates.is_empty() {
+                let regs = pending_updates
+                    .iter()
+                    .map(|u| format!("{:?}={:#x}", u.reg, u.value))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                Logger::info(format!("{insn} ; {regs}"));
+            } else {
+                Logger::info(insn);
+            }
         }
 
         Ok(())
@@ -209,10 +228,7 @@ impl VMemory {
             .disasm_all(&buf, addr)
             .map_err(|_| ValkyrieError::Disassembler("failed to disassemble"))?;
 
-        Ok(insns
-            .iter()
-            .map(|i| format!("{:#x}: {}", i.address(), i))
-            .collect())
+        Ok(insns.iter().map(|i| format!("{i}")).collect())
     }
 
     fn build_disassembler(arch: Arch, archsize: u16) -> Result<Capstone> {

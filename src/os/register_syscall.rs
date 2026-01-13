@@ -1,8 +1,9 @@
 use crate::Valkyrie;
+use crate::arch::x86::handle_x86_syscall;
 use crate::arch::x86_64::handle_x86_64_syscall;
 use crate::error::{Result, ValkyrieError};
 use crate::logger::Logger;
-use crate::os::syscall::io::*;
+use crate::os::syscall::{common::*, io::*};
 use crate::vtype::*;
 
 type SyscallHandler = fn(&mut Valkyrie, u64, u32) -> Result<()>;
@@ -45,7 +46,7 @@ pub type SysFn = fn(&mut Valkyrie, &mut SubCtx) -> Result<u64>;
 
 const SYSCALL_HANDLERS: &[(Arch, SyscallHandler)] = &[
     (Arch::X86_64, handle_x86_64_syscall),
-    // (Arch::X86, handle_x86_syscall), //TODO
+    (Arch::X86, handle_x86_syscall),
 ];
 
 pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
@@ -53,6 +54,11 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("open", sys_open),
     ("write", sys_write),
     ("close", sys_close),
+    ("exit", sys_exit),
+    ("openat", sys_openat),
+    ("renameat2", sys_renameat2),
+    ("renameat", sys_renameat),
+    ("statx", sys_statx),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {
@@ -72,7 +78,7 @@ fn syscall_handler_for(arch: Arch) -> Result<SyscallHandler> {
 pub fn syscall_name_from_no(syscall_no: u64, arch: Arch) -> Result<&'static str> {
     let table: &[(u64, &'static str)] = match arch {
         Arch::X86_64 => crate::arch::x86_64::SYSCALL_TABLE_X86_64,
-        _ => return Err(ValkyrieError::UnsupportedArch(arch)),
+        Arch::X86 => crate::arch::x86::SYSCALL_TABLE_X86,
     };
 
     table
@@ -91,6 +97,7 @@ pub fn syscall_fn_from_name(name: &str) -> Option<SysFn> {
 
 pub fn install_syscall_hook(vk: &mut Valkyrie) -> Result<()> {
     if vk.cfg.os == OsType::BareMetal {
+        Logger::warning("OsType == BareMetal. Syscall handling won't be enabled.");
         return Ok(());
     }
 

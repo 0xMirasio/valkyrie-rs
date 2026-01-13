@@ -1,12 +1,12 @@
 pub mod arch;
 pub mod config;
 pub mod error;
+pub mod fs;
 pub mod hook;
 pub mod loader;
 pub mod logger;
 pub mod memory;
 pub mod os;
-pub mod util;
 pub mod vstruct;
 pub mod vtype;
 
@@ -25,6 +25,8 @@ use unicorn_engine::Unicorn;
 use vtype::Arch;
 
 use std::fmt::Write;
+
+use crate::vtype::PAGE_SIZE;
 
 pub struct Valkyrie {
     cfg: ValkyrieConfig,
@@ -82,10 +84,12 @@ impl Valkyrie {
         let mut ldr = loader::select_loader(vk.cfg.loader)?;
         ldr.run(&mut vk)?;
 
+        let require_exit_trap = ldr.skip_exit_check(&mut vk);
+
         vk.os.set_loader_info(
             ldr.load_address(),
             vk.cfg.baremetal_code.len() as u64,
-            ldr.skip_exit_check(),
+            require_exit_trap,
         );
 
         if vk.cfg.disassemble {
@@ -99,7 +103,7 @@ impl Valkyrie {
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             vk.udb_uc = Some(Box::new(udb_uc));
             if let Some(udb_uc) = vk.udb_uc.as_mut() {
-                udbserver::udbserver(udb_uc.as_mut(), vk.cfg.debug_port, ldr.load_address())
+                udbserver::udbserver(udb_uc, vk.cfg.debug_port, ldr.load_address())
                     .map_err(|e| std::io::Error::other(e.to_string()))?;
             }
         }
@@ -130,8 +134,7 @@ impl Valkyrie {
                     &mut self.uc,
                     |vk: &mut Valkyrie, addr: u64, size: u32, _ud: Option<&mut ()>| {
                         if size != 0
-                            && let Err(e) =
-                                vk.mem.show_instructions(&mut vk.uc, addr, size as usize)
+                            && let Err(e) = VMemory::show_instructions(vk, addr, size as usize)
                         {
                             Logger::warning(format!("disassembly failed at {addr:#x}: {e}"));
                         }
@@ -162,22 +165,11 @@ impl Valkyrie {
         &mut self,
         err: unicorn_engine::unicorn_const::uc_error,
     ) -> ! {
-        let pc_reg: arch::regs::VRegister;
-        let sp_reg: arch::regs::VRegister;
+        let pc_reg = self.arch.regs.pc;
+        let sp_reg = self.arch.regs.sp;
         let color_red = "\u{1b}[1;31m";
         let color_cyan = "\u{1b}[1;36m";
         let color_reset = "\u{1b}[0m";
-
-        match self.cfg.arch {
-            Arch::X86 => {
-                pc_reg = arch::regs::VRegister::X86(arch::x86::RegX86::EIP);
-                sp_reg = arch::regs::VRegister::X86(arch::x86::RegX86::ESP);
-            }
-            Arch::X86_64 => {
-                pc_reg = arch::regs::VRegister::X86_64(arch::x86_64::RegX86_64::RIP);
-                sp_reg = arch::regs::VRegister::X86_64(arch::x86_64::RegX86_64::RSP);
-            }
-        }
 
         let pc = self.arch.regs.get_reg(&mut self.uc, pc_reg).unwrap_or(0);
         let sp = self.arch.regs.get_reg(&mut self.uc, sp_reg).unwrap_or(0);
@@ -316,7 +308,11 @@ impl Valkyrie {
             return Ok(());
         }
 
-        let trap_addr: u64 = 0x0900_0000; // TODO : calculate dynamically this adress
+        if self.os.skip_exit_trap() {
+            return Ok(());
+        }
+
+        let trap_addr: u64 = self.mem.tls_addr_exit + PAGE_SIZE as u64;
         self.mem.map(
             &mut self.uc,
             trap_addr,
@@ -360,6 +356,9 @@ impl Valkyrie {
 
         let ptr_size = (self.cfg.archsize / 8) as usize;
         let trap_bytes = trap_addr.to_le_bytes();
+
+        println!("exit_trap_addr = 0x{trap_addr:x}, ptr_size={ptr_size:x}");
+        self.mem.show_mappings();
 
         self.mem
             .write(&mut self.uc, self.initial_sp, &trap_bytes[..ptr_size])
