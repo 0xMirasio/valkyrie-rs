@@ -14,5 +14,6 @@ crate-type = ["rlib", "cdylib"]
 thiserror = "1"
 unicorn-engine = { version = "2.1.4", features = ["dynamic_linkage"] }
 capstone="0.13.0"
-udbserver= { path = "external/udbserver" }
+udbserver= "0.2.1"
 libc = "0.2.180"
+lief = "0.17.2"

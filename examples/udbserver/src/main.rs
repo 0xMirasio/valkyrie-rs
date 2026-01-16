@@ -12,12 +12,7 @@ pub const SAMPLE_X86_64: [u8; 10] = [
 ];
 
 fn main() {
-    let rootfs_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("rootfs")
-        .join("x8664_linux");
+    let rootfs_path = Path::new("/");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,

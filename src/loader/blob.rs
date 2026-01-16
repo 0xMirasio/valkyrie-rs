@@ -42,24 +42,32 @@ impl Loader for LoaderBlob {
         vk.mem.code_addr_start = vk.cfg.code_base_address;
         vk.mem.code_addr_exit = vk.cfg.code_base_address + code_size;
 
+        // map stack
+
+        let stack_addr = vk.mem.code_addr_exit + PAGE_SIZE as u64;
+        let stack_size = vk.cfg.stack_size;
+
+        vk.mem.stack_addr_start = stack_addr;
+        vk.mem.stack_addr_exit = stack_addr + stack_size;
+
+        if stack_size == 0 {
+            return Err(ValkyrieError::BadConfig("stack_size must be > 0"));
+        }
+
+        vk.mem.map(
+            &mut vk.uc,
+            vk.mem.stack_addr_start,
+            stack_size,
+            Prot::ALL,
+            "[stack]",
+        )?;
+
         // Map Heap
-        let heap_addr = vk.mem.code_addr_exit + PAGE_SIZE as u64;
+        let heap_addr = vk.mem.stack_addr_exit + PAGE_SIZE as u64;
         let heap_size = vk.cfg.heap_size;
 
         vk.mem.heap_addr_start = heap_addr;
         vk.mem.heap_addr_exit = heap_addr + heap_size;
-
-        vk.mem.tls_addr_start = (vk.mem.heap_addr_exit + PAGE_SIZE as u64) & !0xfff;
-        vk.mem.tls_addr_exit = vk.mem.tls_addr_start + PAGE_SIZE as u64;
-
-        if vk.cfg.verbose {
-            Logger::debug(
-                format!(
-                    "LoaderBlob: code_base_addr={entry:#x} code_ram_size={code_size:#x} heap_size={heap_size:#x}"
-                ),
-                vk.cfg.verbose,
-            );
-        }
 
         if heap_size == 0 {
             return Err(ValkyrieError::BadConfig("heap_size must be > 0"));
@@ -73,8 +81,22 @@ impl Loader for LoaderBlob {
             "[heap]",
         )?;
 
+        // map TLS
+
+        vk.mem.tls_addr_start = (vk.mem.heap_addr_exit + PAGE_SIZE as u64) & !0xfff;
+        vk.mem.tls_addr_exit = vk.mem.tls_addr_start + PAGE_SIZE as u64;
+
+        if vk.cfg.verbose {
+            Logger::debug(
+                format!(
+                    "LoaderBlob: code_base_addr={entry:#x} code_ram_size={code_size:#x} heap_size={heap_size:#x} stack_size={stack_size:#x}",
+                ),
+                vk.cfg.verbose,
+            );
+        }
+
         // Stack pointer
-        let sp = heap_addr.saturating_sub(0x1000);
+        let sp = stack_addr + stack_size - 0x10;
         vk.arch.regs.set_reg(
             &mut vk.uc,
             match vk.cfg.arch {

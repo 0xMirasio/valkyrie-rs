@@ -1,8 +1,8 @@
 pub mod blob;
-// TODO: pub mod elf; AJOUTER SUPPORT ELF
+pub mod elf;
 
 use crate::Valkyrie;
-use crate::error::{Result, ValkyrieError};
+use crate::error::Result;
 use crate::vtype::{LoaderType, OsType};
 
 pub trait Loader {
@@ -20,6 +20,6 @@ pub trait Loader {
 pub fn select_loader(loader_type: LoaderType) -> Result<Box<dyn Loader>> {
     match loader_type {
         LoaderType::Raw => Ok(Box::new(blob::LoaderBlob::new())),
-        LoaderType::Elf => Err(ValkyrieError::NotImplemented("ELF loader not implemented")),
+        LoaderType::Elf => Ok(Box::new(elf::LoaderElf::new())),
     }
 }

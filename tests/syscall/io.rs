@@ -21,6 +21,21 @@ pub const HELLO_WRITE_X86_64: [u8; 60] = [
     0x0F, 0x05,
 ];
 
+pub const HELLO_WRITE_X86: [u8; 48] = [
+    0x68, 0x21, 0x0A, 0x00, 0x00, // push dword 0x00000a21
+    0x68, 0x6F, 0x72, 0x6C, 0x64, // push dword 0x646c726f
+    0x68, 0x6F, 0x2C, 0x20, 0x77, // push dword 0x77202c6f
+    0x68, 0x68, 0x65, 0x6C, 0x6C, // push dword 0x6c6c6568
+    0xB8, 0x04, 0x00, 0x00, 0x00, // mov eax, 4
+    0xBB, 0x01, 0x00, 0x00, 0x00, // mov ebx, 1
+    0x89, 0xE1, // mov ecx, esp
+    0xBA, 0x0E, 0x00, 0x00, 0x00, // mov edx, 14
+    0xCD, 0x80, // int 0x80
+    0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+    0x31, 0xDB, // xor ebx, ebx
+    0xCD, 0x80, // int 0x80
+];
+
 #[test]
 fn io_write_x86_64_oslinux_rawloader() {
     let rootfs_path = Path::new("/");
@@ -42,14 +57,36 @@ fn io_write_x86_64_oslinux_rawloader() {
 }
 
 #[test]
+fn io_write_x86_oslinux_rawloader() {
+    let rootfs_path = Path::new("/");
+    let cfg = ValkyrieConfig::new(
+        Arch::X86,
+        OsType::Linux,
+        rootfs_path.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .verbose(true)
+    .disassemble(true)
+    .entry_point(0x400000)
+    .feed_baremetal(&HELLO_WRITE_X86)
+    .unwrap();
+
+    let mut vk = Valkyrie::new(cfg).unwrap();
+    vk.run().unwrap();
+    VMemory::dump_stacks(&mut vk);
+}
+
+#[test]
 fn io_multiple_x86_64_oslinux_fileloader() {
     let rootfs_path = Path::new("/");
+
+    crate::rm_file_if_exists!("/tmp/d").expect("failed to remove /tmp/d before test");
 
     let io_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("examples_src")
         .join("build")
-        .join("io");
+        .join("io_linux_64");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,

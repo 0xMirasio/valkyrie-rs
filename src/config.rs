@@ -10,18 +10,20 @@ use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct ValkyrieConfig {
-    pub arch: Arch,              // arch
-    pub os: OsType,              // os
-    pub loader: LoaderType,      // loader
-    pub rootfs: String,          // rootfspath
-    pub verbose: bool,           // verbosity
-    pub endianess: Endianess,    // endianess
-    pub archsize: u16,           // archsize
-    pub baremetal_code: Vec<u8>, // user baremetal code
-    pub entry_point: u64,        // program entrypoint
-    pub exit_point: u64,         // program exit_point
-    pub code_ram_size: u64,      // program ram size
-    pub heap_size: u64,          // program heap size
+    pub arch: Arch,               // arch
+    pub os: OsType,               // os
+    pub loader: LoaderType,       // loader
+    pub rootfs: String,           // rootfspath
+    pub verbose: bool,            // verbosity
+    pub endianess: Endianess,     // endianess
+    pub archsize: u16,            // archsize
+    pub baremetal_code: Vec<u8>,  // user baremetal code
+    pub elf_file: Option<String>, // elf file path
+    pub entry_point: u64,         // program entrypoint
+    pub exit_point: u64,          // program exit_point
+    pub code_ram_size: u64,       // program ram size
+    pub heap_size: u64,           // program heap size
+    pub stack_size: u64,          // program stack size
     pub code_base_address: u64,
     pub count: usize,      // program instruction max count
     pub timeout: u64,      // program execution max timeout
@@ -48,9 +50,9 @@ impl ValkyrieConfig {
         ));
 
         // todo : add profile management
-
         let code_ram_size: u64 = (PAGE_SIZE as u64) * 10000; // 40000Kb default ram space
         let heap_size: u64 = (PAGE_SIZE as u64) * 100; // 400kb default heap size
+        let stack_size: u64 = (PAGE_SIZE as u64) * 100; // 400kb default stack size
 
         Ok(Self {
             arch,
@@ -61,10 +63,12 @@ impl ValkyrieConfig {
             endianess,
             archsize,
             baremetal_code: Vec::new(),
+            elf_file: Option::None,
             entry_point: 0,
             exit_point: 0,
             code_ram_size,
             heap_size,
+            stack_size,
             code_base_address: 0x400000, // TODO : this address must be set according to arch/size
             count: usize::MAX,           // no instructions limit
             timeout: u64::MAX,           // no timeout limit
@@ -127,10 +131,22 @@ impl ValkyrieConfig {
         Ok(self)
     }
 
-    /// TODO : ELF feed
-    pub fn feed_elf(mut self, _elf_bytes: &[u8]) -> Result<Self, ValkyrieError> {
+    /// ELF feed
+    pub fn feed_elf<P: AsRef<Path>>(mut self, path: P) -> Result<Self, ValkyrieError> {
+        let path_ref: &Path = path.as_ref();
+
+        let meta = fs::metadata(path_ref).map_err(|e| {
+            ValkyrieError::BadConfig(Box::leak(
+                format!("file not accessible {}: {}", path_ref.display(), e).into_boxed_str(),
+            ))
+        })?;
+        if !meta.is_file() {
+            return Err(ValkyrieError::BadConfig("path is not a regular file"));
+        }
+
         self.loader = LoaderType::Elf;
-        Err(ValkyrieError::NotImplemented("ELF loading not implemented"))
+        self.elf_file = Some(path_ref.to_string_lossy().to_string());
+        Ok(self)
     }
 
     // setter ValkyrieConfig::verbose
@@ -196,6 +212,12 @@ impl ValkyrieConfig {
     // setter ValkyrieConfig::heap_size
     pub fn heap_size(mut self, value: u64) -> Self {
         self.heap_size = value;
+        self
+    }
+
+    // setter ValkyrieConfig::stack_size
+    pub fn stack_size(mut self, value: u64) -> Self {
+        self.stack_size = value;
         self
     }
 }

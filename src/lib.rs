@@ -192,6 +192,8 @@ impl Valkyrie {
                     ("EBP", arch::x86::RegX86::EBP),
                     ("ESP", arch::x86::RegX86::ESP),
                     ("EIP", arch::x86::RegX86::EIP),
+                    ("GsBase", arch::x86::RegX86::GsBase),
+                    ("GS", arch::x86::RegX86::GS),
                     ("EFLAGS", arch::x86::RegX86::EFLAGS),
                 ];
                 for (name, reg) in regs {
@@ -229,6 +231,7 @@ impl Valkyrie {
                     ("R15", arch::x86_64::RegX86_64::R15),
                     ("RIP", arch::x86_64::RegX86_64::RIP),
                     ("EFLAGS", arch::x86_64::RegX86_64::EFLAGS),
+                    ("FSBASE", arch::x86_64::RegX86_64::FsBase),
                 ];
                 for (name, reg) in regs {
                     let value = self
@@ -356,15 +359,10 @@ impl Valkyrie {
 
         let ptr_size = (self.cfg.archsize / 8) as usize;
         let trap_bytes = trap_addr.to_le_bytes();
-
-        println!("exit_trap_addr = 0x{trap_addr:x}, ptr_size={ptr_size:x}");
         self.mem.show_mappings();
 
         self.mem
-            .write(&mut self.uc, self.initial_sp, &trap_bytes[..ptr_size])
-            .map_err(|_| {
-                crate::error::ValkyrieError::UnicornGeneralError("failed to write exit trap")
-            })?;
+            .write(&mut self.uc, self.initial_sp, &trap_bytes[..ptr_size])?;
 
         Ok(())
     }
