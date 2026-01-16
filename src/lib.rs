@@ -1,4 +1,5 @@
 pub mod arch;
+pub mod common;
 pub mod config;
 pub mod error;
 pub mod fs;
@@ -16,6 +17,7 @@ pub use error::Result;
 pub use hook::{HookEnv, VCoreHooks};
 pub use memory::VMemory;
 pub use os::VCoreOs;
+pub use os::syscall::common::LinuxCreds;
 pub use vstruct::VCoreStructs;
 pub use vtype::VState;
 
@@ -38,9 +40,10 @@ pub struct Valkyrie {
     pub arch: arch::VArch,                         // arch subgroup
     pub mem: memory::VMemory,                      // mem subgroup
     pub os: os::VCoreOs,                           // os subgroup
-    pub exit_trap_addr: Option<u64>,
-    pub exit_trap_hook: Option<unicorn_engine::UcHookId>,
-    pub initial_sp: u64,
+    pub exit_trap_addr: Option<u64>,               // exit trap address (for baremetal)
+    pub exit_trap_hook: Option<unicorn_engine::UcHookId>, // exit trap hook id (for baremetal)
+    pub initial_sp: u64,                           // initial stack pointer
+    pub linux_creds: LinuxCreds,                   // Linux credentials manager
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +82,7 @@ impl Valkyrie {
             exit_trap_addr: None,
             exit_trap_hook: None,
             initial_sp: 0,
+            linux_creds: LinuxCreds::from_host(),
         };
 
         let mut ldr = loader::select_loader(vk.cfg.loader)?;

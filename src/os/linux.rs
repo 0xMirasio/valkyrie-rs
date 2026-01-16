@@ -35,28 +35,6 @@ impl OsLinux {
 impl OsLinux {
     #[allow(dead_code)]
     fn setup_tls_i386(&self, vk: &mut crate::Valkyrie, tls_base: u64) -> crate::error::Result<()> {
-        fn gdt_desc(base: u32, limit: u32, access: u8, flags: u8) -> [u8; 8] {
-            let mut d = [0u8; 8];
-
-            d[0] = (limit & 0xff) as u8;
-            d[1] = ((limit >> 8) & 0xff) as u8;
-
-            d[2] = (base & 0xff) as u8;
-            d[3] = ((base >> 8) & 0xff) as u8;
-            d[4] = ((base >> 16) & 0xff) as u8;
-
-            d[5] = access;
-
-            d[6] = (((limit >> 16) & 0x0f) as u8) | ((flags & 0x0f) << 4);
-            d[7] = ((base >> 24) & 0xff) as u8;
-
-            d
-        }
-
-        fn selector(idx: u16, rpl: u16) -> u16 {
-            (idx << 3) | (rpl & 0x3)
-        }
-
         let gdt_addr = vk.mem.tls_addr_start;
         let gdt_limit: u32 = 0x0fff;
 
@@ -281,4 +259,26 @@ impl Default for OsLinux {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn gdt_desc(base: u32, limit: u32, access: u8, flags: u8) -> [u8; 8] {
+    let mut d = [0u8; 8];
+
+    d[0] = (limit & 0xff) as u8;
+    d[1] = ((limit >> 8) & 0xff) as u8;
+
+    d[2] = (base & 0xff) as u8;
+    d[3] = ((base >> 8) & 0xff) as u8;
+    d[4] = ((base >> 16) & 0xff) as u8;
+
+    d[5] = access;
+
+    d[6] = (((limit >> 16) & 0x0f) as u8) | ((flags & 0x0f) << 4);
+    d[7] = ((base >> 24) & 0xff) as u8;
+
+    d
+}
+
+fn selector(idx: u16, rpl: u16) -> u16 {
+    (idx << 3) | (rpl & 0x3)
 }
