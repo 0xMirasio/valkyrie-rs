@@ -93,7 +93,10 @@ impl Loader for LoaderElf {
             return Err(ValkyrieError::BadConfig("heap_size must be > 0"));
         }
 
-        let stack_addr = align_up(max_addr + PAGE_SIZE as u64, PAGE_SIZE as u64);
+        vk.mem.tls_addr_start = align_up(max_addr + PAGE_SIZE as u64, PAGE_SIZE as u64);
+        vk.mem.tls_addr_exit = vk.mem.tls_addr_start + PAGE_SIZE as u64;
+
+        let stack_addr = align_up(vk.mem.tls_addr_exit + PAGE_SIZE as u64, PAGE_SIZE as u64);
         vk.mem.stack_addr_start = stack_addr;
         vk.mem.stack_addr_exit = stack_addr + stack_size;
         vk.mem.map(
@@ -107,6 +110,7 @@ impl Loader for LoaderElf {
         let heap_addr = align_up(vk.mem.stack_addr_exit + PAGE_SIZE as u64, PAGE_SIZE as u64);
         vk.mem.heap_addr_start = heap_addr;
         vk.mem.heap_addr_exit = heap_addr + heap_size;
+
         vk.mem.map(
             &mut vk.uc,
             vk.mem.heap_addr_start,
@@ -114,10 +118,6 @@ impl Loader for LoaderElf {
             Prot::ALL,
             "[heap]",
         )?;
-
-        vk.mem.tls_addr_start =
-            align_up(vk.mem.heap_addr_exit + PAGE_SIZE as u64, PAGE_SIZE as u64);
-        vk.mem.tls_addr_exit = vk.mem.tls_addr_start + PAGE_SIZE as u64;
 
         if vk.cfg.verbose {
             Logger::debug(

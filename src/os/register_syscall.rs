@@ -63,8 +63,8 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("getuid", sys_getuid),
     ("getegid", sys_getegid),
     ("getgid", sys_getgid),
-    ("brk", brk),
-    ("arch_prctl", arch_prctl),
+    ("brk", sys_brk),
+    ("arch_prctl", sys_arch_prctl),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {

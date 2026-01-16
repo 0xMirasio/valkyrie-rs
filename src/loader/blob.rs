@@ -2,6 +2,7 @@ use crate::Valkyrie;
 use crate::arch::regs::VRegister;
 use crate::arch::x86::RegX86;
 use crate::arch::x86_64::RegX86_64;
+use crate::common::align_up;
 use crate::error::{Result, ValkyrieError};
 use crate::loader::Loader;
 use crate::logger::Logger;
@@ -39,12 +40,20 @@ impl Loader for LoaderBlob {
             .map(&mut vk.uc, entry, code_size, Prot::ALL, "[code]")?;
         vk.mem.write(&mut vk.uc, entry, &vk.cfg.baremetal_code)?;
 
+        println!("code mapped");
+
         vk.mem.code_addr_start = vk.cfg.code_base_address;
         vk.mem.code_addr_exit = vk.cfg.code_base_address + code_size;
 
+        // map TLS
+
+        vk.mem.tls_addr_start =
+            align_up(vk.mem.code_addr_exit + PAGE_SIZE as u64, PAGE_SIZE as u64);
+        vk.mem.tls_addr_exit = vk.mem.tls_addr_start + PAGE_SIZE as u64;
+
         // map stack
 
-        let stack_addr = vk.mem.code_addr_exit + PAGE_SIZE as u64;
+        let stack_addr = align_up(vk.mem.tls_addr_exit + PAGE_SIZE as u64, PAGE_SIZE as u64);
         let stack_size = vk.cfg.stack_size;
 
         vk.mem.stack_addr_start = stack_addr;
@@ -62,8 +71,10 @@ impl Loader for LoaderBlob {
             "[stack]",
         )?;
 
+        println!("stack mapped");
+
         // Map Heap
-        let heap_addr = vk.mem.stack_addr_exit + PAGE_SIZE as u64;
+        let heap_addr = align_up(vk.mem.stack_addr_exit + PAGE_SIZE as u64, PAGE_SIZE as u64);
         let heap_size = vk.cfg.heap_size;
 
         vk.mem.heap_addr_start = heap_addr;
@@ -81,10 +92,7 @@ impl Loader for LoaderBlob {
             "[heap]",
         )?;
 
-        // map TLS
-
-        vk.mem.tls_addr_start = (vk.mem.heap_addr_exit + PAGE_SIZE as u64) & !0xfff;
-        vk.mem.tls_addr_exit = vk.mem.tls_addr_start + PAGE_SIZE as u64;
+        println!("heap mapped");
 
         if vk.cfg.verbose {
             Logger::debug(

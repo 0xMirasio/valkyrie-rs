@@ -94,10 +94,12 @@ impl OsLinux {
     }
 
     fn setup_tls_minimal(&self, vk: &mut Valkyrie) -> Result<()> {
+        let tls_size = vk.mem.tls_addr_exit - vk.mem.tls_addr_start;
+
         vk.mem.map(
             &mut vk.uc,
             vk.mem.tls_addr_start,
-            (PAGE_SIZE * 4) as u64,
+            tls_size,
             Prot::READ | Prot::WRITE,
             "[tls]",
         )?;
