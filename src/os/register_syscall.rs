@@ -72,6 +72,8 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("set_robust_list", sys_set_robust_list),
     ("get_robust_list", sys_get_robust_list),
     ("rseq", sys_rseq),
+    ("writev", sys_writev),
+    ("exit_group", sys_exit_group),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {

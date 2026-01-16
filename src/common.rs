@@ -1,3 +1,4 @@
+use crate::Valkyrie;
 use crate::vtype::*;
 use crate::{Result, ValkyrieError};
 
@@ -31,6 +32,13 @@ pub fn zero_fill<D>(uc: &mut Unicorn<'_, D>, mut addr: u64, mut size: u64) -> Re
         size = size.saturating_sub(write_size as u64);
     }
     Ok(())
+}
+
+pub fn read_guest_word(vk: &mut Valkyrie, addr: u64, width: usize) -> Result<u64> {
+    let bytes = vk.mem.read(&mut vk.uc, addr, width)?;
+    let mut buf = [0u8; 8];
+    buf[..width].copy_from_slice(&bytes);
+    Ok(u64::from_le_bytes(buf))
 }
 
 pub fn neg_errno(e: i32) -> u64 {

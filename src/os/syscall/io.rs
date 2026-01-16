@@ -1,5 +1,5 @@
 use crate::Valkyrie;
-use crate::common::{last_errno, neg_errno};
+use crate::common::{last_errno, neg_errno, read_guest_word};
 use crate::error::Result;
 use crate::fs::*;
 use crate::logger::Logger;
@@ -198,6 +198,66 @@ pub fn sys_write(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     };
 
     Ok(bytes_written as u64)
+}
+
+pub fn sys_writev(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0();
+    let iov_addr = sctx.arg1();
+    let iovcnt = sctx.arg2() as usize;
+
+    if iovcnt == 0 {
+        return Ok(0);
+    }
+
+    let ptr_size = (vk.cfg.archsize / 8) as usize;
+    let iov_size = ptr_size * 2;
+
+    let mut total = 0u64;
+    let mut table_guard = if fd > 2 {
+        Some(fd_table().lock().unwrap())
+    } else {
+        None
+    };
+
+    for index in 0..iovcnt {
+        let base_addr = iov_addr + (index * iov_size) as u64;
+        let iov_base = read_guest_word(vk, base_addr, ptr_size)?;
+        let iov_len = read_guest_word(vk, base_addr + ptr_size as u64, ptr_size)? as usize;
+
+        if iov_len == 0 {
+            continue;
+        }
+
+        let buffer = vk.mem.read(&mut vk.uc, iov_base, iov_len)?;
+        let write_result = match fd {
+            1 => io::stdout().write(&buffer),
+            2 => io::stderr().write(&buffer),
+            _ => match table_guard.as_mut() {
+                Some(table) => match table.files.get_mut(&fd) {
+                    Some(vkf) => vkf.file.write(&buffer),
+                    None => return Ok(neg_errno(libc::EBADF)),
+                },
+                None => return Ok(neg_errno(libc::EBADF)),
+            },
+        };
+
+        match write_result {
+            Ok(count) => {
+                total += count as u64;
+                if count < iov_len {
+                    break;
+                }
+            }
+            Err(_) => {
+                if total > 0 {
+                    return Ok(total);
+                }
+                return Ok(last_errno());
+            }
+        }
+    }
+
+    Ok(total)
 }
 
 pub fn sys_close(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
