@@ -1,4 +1,5 @@
 use crate::Valkyrie;
+use crate::common::{last_errno, neg_errno};
 use crate::error::Result;
 use crate::fs::*;
 use crate::logger::Logger;
@@ -11,17 +12,6 @@ use std::io::{self, Read, Write};
 #[cfg(target_os = "linux")]
 use std::os::unix::io::FromRawFd;
 use std::path::PathBuf;
-
-fn neg_errno(e: i32) -> u64 {
-    (-(e as i64)) as u64
-}
-
-fn last_errno() -> u64 {
-    let e = std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(libc::EIO);
-    neg_errno(e)
-}
 
 #[cfg(target_os = "linux")]
 unsafe fn open_at(dirfd: c_int, c_path: *const c_char, flags: c_int, mode: u32) -> c_int {

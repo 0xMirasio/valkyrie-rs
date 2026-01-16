@@ -1,4 +1,4 @@
-use crate::vtype::PAGE_SIZE;
+use crate::vtype::*;
 use crate::{Result, ValkyrieError};
 
 use unicorn_engine::Unicorn;
@@ -31,4 +31,15 @@ pub fn zero_fill<D>(uc: &mut Unicorn<'_, D>, mut addr: u64, mut size: u64) -> Re
         size = size.saturating_sub(write_size as u64);
     }
     Ok(())
+}
+
+pub fn neg_errno(e: i32) -> u64 {
+    (-(e as i64)) as u64
+}
+
+pub fn last_errno() -> u64 {
+    let e = std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(libc::EIO);
+    neg_errno(e)
 }

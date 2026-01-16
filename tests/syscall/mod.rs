@@ -1,5 +1,6 @@
 pub mod common;
 pub mod io;
+pub mod memory;
 
 #[macro_export]
 macro_rules! rm_file_if_exists {

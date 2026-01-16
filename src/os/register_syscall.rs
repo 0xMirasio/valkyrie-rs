@@ -3,7 +3,7 @@ use crate::arch::x86::handle_x86_syscall;
 use crate::arch::x86_64::handle_x86_64_syscall;
 use crate::error::{Result, ValkyrieError};
 use crate::logger::Logger;
-use crate::os::syscall::{common::*, io::*};
+use crate::os::syscall::{common::*, io::*, memory::*, thread::*};
 use crate::vtype::*;
 
 type SyscallHandler = fn(&mut Valkyrie, u64, u32) -> Result<()>;
@@ -65,6 +65,13 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("getgid", sys_getgid),
     ("brk", sys_brk),
     ("arch_prctl", sys_arch_prctl),
+    ("uname", sys_uname),
+    ("mmap", sys_mmap),
+    ("gettid", sys_gettid),
+    ("set_tid_address", sys_set_tid_address),
+    ("set_robust_list", sys_set_robust_list),
+    ("get_robust_list", sys_get_robust_list),
+    ("rseq", sys_rseq),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {
