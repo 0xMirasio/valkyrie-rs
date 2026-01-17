@@ -164,7 +164,7 @@ pub fn sys_mmap(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let page_size = PAGE_SIZE as u64;
     let map_len = align_up(len, page_size);
 
-    if addr != 0 && addr % page_size != 0 {
+    if !addr.is_multiple_of(page_size) {
         return Ok(neg_errno(libc::EINVAL));
     }
 
@@ -233,7 +233,7 @@ pub fn sys_munmap(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         return Ok(neg_errno(libc::EINVAL));
     }
 
-    if addr % (PAGE_SIZE as u64) != 0 {
+    if !addr.is_multiple_of(PAGE_SIZE as u64) {
         return Ok(neg_errno(libc::EINVAL));
     }
 
