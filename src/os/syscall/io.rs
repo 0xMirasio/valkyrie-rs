@@ -61,10 +61,7 @@ pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let preview = String::from_utf8_lossy(&buffer[..preview_len]);
 
     Logger::debug(
-        format!(
-            "sys_read(fd={}, count={}) => {} ({:?})",
-            fd, count, bytes_read, preview
-        ),
+        format!("sys_read(fd={fd}, count={count}) => {bytes_read} ({preview:?})"),
         vk.cfg.verbose,
     );
 
@@ -220,10 +217,7 @@ pub fn sys_write(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let preview = String::from_utf8_lossy(&buffer[..preview_len]);
 
     Logger::debug(
-        format!(
-            "sys_write(fd={}, count={}) => {} ({:?})",
-            fd, count, bytes_written, preview
-        ),
+        format!("sys_write(fd={fd}, count={count}) => {bytes_written} ({preview:?})"),
         vk.cfg.verbose,
     );
 
@@ -297,7 +291,7 @@ pub fn sys_close(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         return Ok(0);
     }
 
-    Logger::debug(format!("sys_close(fd={})", fd), vk.cfg.verbose);
+    Logger::debug(format!("sys_close(fd={fd})"), vk.cfg.verbose);
 
     let mut table = fd_table().lock().unwrap();
     if table.files.remove(&fd).is_some() {
