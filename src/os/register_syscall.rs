@@ -67,6 +67,7 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("arch_prctl", sys_arch_prctl),
     ("uname", sys_uname),
     ("mmap", sys_mmap),
+    ("munmap", sys_munmap),
     ("gettid", sys_gettid),
     ("set_tid_address", sys_set_tid_address),
     ("set_robust_list", sys_set_robust_list),
@@ -74,6 +75,11 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("rseq", sys_rseq),
     ("writev", sys_writev),
     ("exit_group", sys_exit_group),
+    ("mprotect", sys_mprotect),
+    ("prlimit64", sys_prlimit64),
+    ("clock_gettime", sys_clock_gettime),
+    ("getrandom", sys_getrandom),
+    ("readlink", sys_readlink),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {

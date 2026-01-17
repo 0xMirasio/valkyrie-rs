@@ -34,7 +34,12 @@ pub fn zero_fill<D>(uc: &mut Unicorn<'_, D>, mut addr: u64, mut size: u64) -> Re
     Ok(())
 }
 
-pub fn read_guest_word(vk: &mut Valkyrie, addr: u64, width: usize) -> Result<u64> {
+pub fn write_word(vk: &mut Valkyrie, addr: u64, value: u64, width: usize) -> Result<()> {
+    let bytes = value.to_le_bytes();
+    vk.mem.write(&mut vk.uc, addr, &bytes[..width])
+}
+
+pub fn read_word(vk: &mut Valkyrie, addr: u64, width: usize) -> Result<u64> {
     let bytes = vk.mem.read(&mut vk.uc, addr, width)?;
     let mut buf = [0u8; 8];
     buf[..width].copy_from_slice(&bytes);

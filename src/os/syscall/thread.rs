@@ -10,7 +10,7 @@ fn current_tid() -> u64 {
         if tid < 0 {
             return 0;
         }
-        return tid as u64;
+        tid as u64
     }
 
     #[cfg(not(target_os = "linux"))]

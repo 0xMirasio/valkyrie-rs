@@ -1,5 +1,5 @@
 use crate::Valkyrie;
-use crate::common::{last_errno, neg_errno, read_guest_word};
+use crate::common::{last_errno, neg_errno, read_word};
 use crate::error::Result;
 use crate::fs::*;
 use crate::logger::Logger;
@@ -57,6 +57,17 @@ pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         }
     };
 
+    let preview_len = (bytes_read as usize).min(10).min(buffer.len());
+    let preview = String::from_utf8_lossy(&buffer[..preview_len]);
+
+    Logger::debug(
+        format!(
+            "sys_read(fd={}, count={}) => {} ({:?})",
+            fd, count, bytes_read, preview
+        ),
+        vk.cfg.verbose,
+    );
+
     if bytes_read > 0 {
         vk.mem.write(&mut vk.uc, buf_addr, &buffer[..bytes_read])?;
     }
@@ -72,6 +83,11 @@ pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     let path = read_guest_cstring(vk, path_ptr)?;
     let host_path = resolve_guest_path(vk, &path);
+
+    Logger::debug(
+        format!("sys_open(path={}, flags={})", host_path.display(), flags),
+        vk.cfg.verbose,
+    );
 
     let c_path = match CString::new(host_path.to_string_lossy().as_bytes()) {
         Ok(s) => s,
@@ -90,14 +106,13 @@ pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         return Ok((-(err as i64)) as u64);
     }
 
-    #[allow(unused_assignments)]
-    let mut file: Option<File> = None;
+    let mut _file: Option<File> = None;
     #[cfg(target_os = "linux")]
     {
-        file = Some(unsafe { FromRawFd::from_raw_fd(fd) });
+        _file = Some(unsafe { FromRawFd::from_raw_fd(fd) });
     }
 
-    if file.is_none() {
+    if _file.is_none() {
         unsafe { libc::close(fd) };
         return Ok((-(libc::EINVAL as i64)) as u64);
     }
@@ -108,7 +123,7 @@ pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         table.files.insert(
             fd as u64,
             VkFile {
-                file: file.unwrap(),
+                file: _file.unwrap(),
                 path: host_path,
                 flags: flags as u64,
                 mode: mode as u64,
@@ -128,6 +143,11 @@ pub fn sys_openat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let path = read_guest_cstring(vk, path_ptr)?;
     let host_path = resolve_guest_path(vk, &path);
 
+    Logger::debug(
+        format!("sys_openat(dirfd={}, path={})", dirfd, host_path.display()),
+        vk.cfg.verbose,
+    );
+
     let c_path = match CString::new(host_path.to_string_lossy().as_bytes()) {
         Ok(s) => s,
         Err(_) => return Ok(neg_errno(libc::EINVAL)),
@@ -138,15 +158,14 @@ pub fn sys_openat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         return Ok(last_errno());
     }
 
-    #[allow(unused_assignments)]
-    let mut file: Option<File> = None;
+    let mut _file: Option<File> = None;
 
     #[cfg(target_os = "linux")]
     {
-        file = Some(unsafe { std::fs::File::from_raw_fd(fd) });
+        _file = Some(unsafe { std::fs::File::from_raw_fd(fd) });
     }
 
-    if file.is_none() {
+    if _file.is_none() {
         unsafe { libc::close(fd) };
         return Ok(neg_errno(libc::EINVAL));
     }
@@ -155,7 +174,7 @@ pub fn sys_openat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     table.files.insert(
         fd as u64,
         VkFile {
-            file: file.unwrap(),
+            file: _file.unwrap(),
             path: host_path,
             flags: flags as u64,
             mode: mode as u64,
@@ -197,6 +216,17 @@ pub fn sys_write(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         }
     };
 
+    let preview_len = (bytes_written as usize).min(10).min(buffer.len());
+    let preview = String::from_utf8_lossy(&buffer[..preview_len]);
+
+    Logger::debug(
+        format!(
+            "sys_write(fd={}, count={}) => {} ({:?})",
+            fd, count, bytes_written, preview
+        ),
+        vk.cfg.verbose,
+    );
+
     Ok(bytes_written as u64)
 }
 
@@ -221,8 +251,8 @@ pub fn sys_writev(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     for index in 0..iovcnt {
         let base_addr = iov_addr + (index * iov_size) as u64;
-        let iov_base = read_guest_word(vk, base_addr, ptr_size)?;
-        let iov_len = read_guest_word(vk, base_addr + ptr_size as u64, ptr_size)? as usize;
+        let iov_base = read_word(vk, base_addr, ptr_size)?;
+        let iov_len = read_word(vk, base_addr + ptr_size as u64, ptr_size)? as usize;
 
         if iov_len == 0 {
             continue;
@@ -260,12 +290,14 @@ pub fn sys_writev(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(total)
 }
 
-pub fn sys_close(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+pub fn sys_close(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let fd = sctx.arg0();
 
     if fd <= 2 {
         return Ok(0);
     }
+
+    Logger::debug(format!("sys_close(fd={})", fd), vk.cfg.verbose);
 
     let mut table = fd_table().lock().unwrap();
     if table.files.remove(&fd).is_some() {
@@ -309,14 +341,22 @@ pub fn sys_renameat2(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Err(_) => return Ok(neg_errno(libc::EINVAL)),
     };
 
-    #[allow(unused_assignments)]
-    let mut ret = -1_i64;
+    Logger::debug(
+        format!(
+            "sys_renameat2({}, {})",
+            old_abs.display(),
+            new_abs.display(),
+        ),
+        vk.cfg.verbose,
+    );
+
+    let mut _ret = -1_i64;
     // int renameat2(int olddirfd, const char *oldpath,
     //              int newdirfd, const char *newpath, unsigned int flags);
 
     #[cfg(target_os = "linux")]
     {
-        ret = unsafe {
+        _ret = unsafe {
             libc::renameat2(
                 libc::AT_FDCWD,
                 old_c.as_ptr() as *const c_char,
@@ -332,7 +372,7 @@ pub fn sys_renameat2(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     {
         if flags == 0 {
             Logger::warning("renameat2 not available on this platform. Using rename() as flags==0");
-            ret = unsafe {
+            _ret = unsafe {
                 libc::rename(
                     old_c.as_ptr() as *const c_char,
                     new_c.as_ptr() as *const c_char,
@@ -344,10 +384,10 @@ pub fn sys_renameat2(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         }
     }
 
-    if ret == -1 {
+    if _ret == -1 {
         Ok(last_errno())
     } else {
-        Ok(ret as u64)
+        Ok(_ret as u64)
     }
 }
 
@@ -369,16 +409,17 @@ pub fn sys_statx(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Err(_) => return Ok(neg_errno(libc::EINVAL)),
     };
 
+    Logger::debug(format!("sys_statx({})", abs_path.display()), vk.cfg.verbose);
+
     let mut st: Statx = Statx::default();
 
     // int statx(int dirfd, const char *pathname, int flags,
     //           unsigned int mask, struct statx *statxbuf);
-    #[allow(unused_assignments)]
-    let mut ret = -1_i64;
+    let mut _ret = -1_i64;
 
     #[cfg(target_os = "linux")]
     {
-        ret = unsafe {
+        _ret = unsafe {
             libc::syscall(
                 libc::SYS_statx as libc::c_long,
                 0 as c_int,
@@ -394,7 +435,7 @@ pub fn sys_statx(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Logger::warning("statx not supported on this platform. syscall will return -1;");
     }
 
-    if ret == -1 {
+    if _ret == -1 {
         return Ok(last_errno());
     }
 
@@ -403,3 +444,34 @@ pub fn sys_statx(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     Ok(0)
 }
+
+pub fn sys_readlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let path_ptr = sctx.arg0();
+    let buf_addr = sctx.arg1();
+    let buf_size = sctx.arg2() as usize;
+
+    if buf_size == 0 {
+        return Ok(0);
+    }
+
+    let path = read_guest_cstring(vk, path_ptr)?;
+    let host_path = resolve_guest_path(vk, &path);
+
+    Logger::debug(
+        format!("sys_readlink({})", host_path.display()),
+        vk.cfg.verbose,
+    );
+
+    let target = match std::fs::read_link(&host_path) {
+        Ok(p) => p,
+        Err(_) => return Ok(last_errno()),
+    };
+
+    let target_bytes = target.to_string_lossy();
+    let bytes = target_bytes.as_bytes();
+    let count = bytes.len().min(buf_size);
+    vk.mem.write(&mut vk.uc, buf_addr, &bytes[..count])?;
+    Ok(count as u64)
+}
+
+// TODO : implement virtual proc mapper /sys with rootfs

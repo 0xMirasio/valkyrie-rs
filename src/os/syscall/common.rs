@@ -1,11 +1,13 @@
 use crate::Valkyrie;
-use crate::common::neg_errno;
+use crate::common::{last_errno, neg_errno, write_word};
 use crate::error::Result;
 use crate::logger::Logger;
 use crate::os::register_syscall::SubCtx;
 use crate::vtype::*;
 
 use users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
+
+const RLIM_INFINITY: u64 = libc::RLIM_INFINITY;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LinuxCreds {
@@ -129,6 +131,76 @@ pub fn sys_uname(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         if vk.mem.write(&mut vk.uc, addr, f).is_err() {
             return Ok(neg_errno(libc::EFAULT));
         }
+    }
+
+    Ok(0)
+}
+
+pub fn sys_clock_gettime(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let _clock_id = sctx.arg0() as libc::clockid_t;
+    let tp = sctx.arg1();
+    if tp == 0 {
+        return Ok(neg_errno(libc::EFAULT));
+    }
+
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { libc::clock_gettime(_clock_id, &mut ts as *mut libc::timespec) };
+    if rc != 0 {
+        return Ok(last_errno());
+    }
+
+    let width = (vk.cfg.archsize / 8) as usize;
+    write_word(vk, tp, ts.tv_sec as u64, width)?;
+    write_word(vk, tp + width as u64, ts.tv_nsec as u64, width)?;
+
+    Ok(0)
+}
+
+pub fn sys_getrandom(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let buf_addr = sctx.arg0();
+    let count = sctx.arg1() as usize;
+    let _flags = sctx.arg2() as u32;
+
+    if count == 0 {
+        return Ok(0);
+    }
+
+    let mut buffer = vec![0u8; count];
+    #[cfg(target_os = "linux")]
+    {
+        let rc = unsafe { libc::getrandom(buffer.as_mut_ptr() as *mut _, count, _flags) };
+        if rc < 0 {
+            return Ok(last_errno());
+        }
+        vk.mem.write(&mut vk.uc, buf_addr, &buffer[..rc as usize])?;
+        Ok(rc as u64)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        vk.mem.write(&mut vk.uc, buf_addr, &buffer)?;
+        Ok(count as u64)
+    }
+}
+
+// TODO : implement resource limits properly
+pub fn sys_prlimit64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let _pid = sctx.arg0();
+    let _resource = sctx.arg1();
+    let new_limit = sctx.arg2();
+    let old_limit = sctx.arg3();
+
+    let width = (vk.cfg.archsize / 8) as usize;
+    if old_limit != 0 {
+        write_word(vk, old_limit, RLIM_INFINITY, width)?;
+        write_word(vk, old_limit + width as u64, RLIM_INFINITY, width)?;
+    }
+
+    if new_limit != 0 {
+        return Ok(0);
     }
 
     Ok(0)

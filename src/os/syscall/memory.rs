@@ -1,7 +1,7 @@
 use crate::Valkyrie;
 use crate::arch::regs::VRegister;
 use crate::arch::x86_64::RegX86_64;
-use crate::common::{align_up, neg_errno};
+use crate::common::{align_down, align_up, neg_errno};
 use crate::error::Result;
 use crate::fs::fd_table;
 use crate::os::register_syscall::SubCtx;
@@ -194,4 +194,54 @@ pub fn sys_mmap(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 
     Ok(map_addr)
+}
+
+pub fn sys_mprotect(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let addr = sctx.arg0();
+    let len = sctx.arg1();
+    let prot = sctx.arg2() as i32;
+
+    if len == 0 {
+        return Ok(neg_errno(libc::EINVAL));
+    }
+
+    let start = align_down(addr, PAGE_SIZE as u64);
+    let end = align_up(addr.saturating_add(len), PAGE_SIZE as u64);
+    let size = end.saturating_sub(start);
+
+    let uc_prot = prot_from_flags(prot);
+    vk.uc.mem_protect(start, size, uc_prot)?;
+
+    for region in vk.mem.regions.iter_mut() {
+        let region_end = region.start + region.size;
+        if start < region_end && end > region.start {
+            region.prot = uc_prot;
+        }
+    }
+
+    Ok(0)
+}
+
+pub fn sys_munmap(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let addr = sctx.arg0();
+    let len = sctx.arg1();
+
+    if addr == 0 {
+        return Ok(neg_errno(libc::EINVAL));
+    }
+    if len == 0 {
+        return Ok(neg_errno(libc::EINVAL));
+    }
+
+    if addr % (PAGE_SIZE as u64) != 0 {
+        return Ok(neg_errno(libc::EINVAL));
+    }
+
+    let unmap_len = align_up(len, PAGE_SIZE as u64);
+
+    if vk.uc.mem_unmap(addr, unmap_len).is_err() {
+        return Ok(neg_errno(libc::EINVAL));
+    }
+
+    Ok(0)
 }
