@@ -13,7 +13,7 @@ TARGETS := io #common
 SRC_io := io/io.c
 #SRC_common := common/common.c
 
-ALL_BINS := $(foreach t,$(TARGETS),$(foreach a,$(ARCHES),$(BUILD_DIR)/$(t)_linux_$(a)))
+ALL_BINS := $(foreach t,$(TARGETS),$(foreach a,$(ARCHES),$(BUILD_DIR)/$(t)_linux_$(a)_static))
 
 .PHONY: all init clean io common
 
@@ -22,11 +22,11 @@ all: $(ALL_BINS)
 init:
 	@mkdir -p $(BUILD_DIR)
 
-io: $(BUILD_DIR)/io_linux_32 $(BUILD_DIR)/io_linux_64
+io: $(BUILD_DIR)/io_linux_32_static $(BUILD_DIR)/io_linux_64_static
 #common: $(BUILD_DIR)/common_linux_32 $(BUILD_DIR)/common_linux_64
 
 define build_rule
-$(BUILD_DIR)/$(1)_linux_$(2): $$(SRC_$(1)) | init
+$(BUILD_DIR)/$(1)_linux_$(2)_static: $$(SRC_$(1)) | init
 	$$(CC) $$(CFLAGS) $$(CFLAGS_$(2)) -o $$@ $$< $$(LDFLAGS) $$(LDFLAGS_$(2))
 endef
 

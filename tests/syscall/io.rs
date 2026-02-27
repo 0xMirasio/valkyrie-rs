@@ -86,7 +86,7 @@ fn io_multiple_x86_64_oslinux_fileloader() {
         .join("tests")
         .join("examples_src")
         .join("build")
-        .join("io_linux_64");
+        .join("io_linux_64_static");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,
@@ -118,7 +118,7 @@ fn io_multiple_x86_64_oslinux_fileloader() {
 }
 
 #[test]
-fn io_multiple_x86_64_oslinux_elfloader() {
+fn io_multiple_x86_64_oslinux_elfloader_static() {
     let rootfs_path = Path::new("/");
 
     crate::rm_file_if_exists!("/tmp/d").expect("failed to remove /tmp/d before test");
@@ -127,7 +127,7 @@ fn io_multiple_x86_64_oslinux_elfloader() {
         .join("tests")
         .join("examples_src")
         .join("build")
-        .join("io_linux_64");
+        .join("io_linux_64_static");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,
@@ -155,10 +155,10 @@ fn io_multiple_x86_64_oslinux_elfloader() {
     );
 }
 
-// TODO : fix io_multiple_x86_oslinux_elfloader
+// TODO : fix io_multiple_x86_oslinux_elfloader_static
 /*
 #[test]
-fn io_multiple_x86_oslinux_elfloader() {
+fn io_multiple_x86_oslinux_elfloader_static() {
     let rootfs_path = Path::new("/");
 
     crate::rm_file_if_exists!("/tmp/d").expect("failed to remove /tmp/d before test");
@@ -167,7 +167,7 @@ fn io_multiple_x86_oslinux_elfloader() {
         .join("tests")
         .join("examples_src")
         .join("build")
-        .join("io_linux_32");
+        .join("io_linux_32_static");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86,

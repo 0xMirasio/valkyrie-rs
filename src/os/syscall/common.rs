@@ -205,3 +205,60 @@ pub fn sys_prlimit64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     Ok(0)
 }
+
+pub fn sys_getpid(_vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(unsafe { libc::getpid() as u64 })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("sys_getpid() unsupported on this os. Returning dummy pid=3000");
+        Ok(3000) // return dummy pid
+    }
+}
+
+pub fn sys_tgkill(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let tgid = sctx.arg0() as i64;
+    let tid = sctx.arg1() as i64;
+    let sig = sctx.arg2() as i32;
+
+    #[cfg(target_os = "linux")]
+    {
+        let host_pid = unsafe { libc::getpid() as i64 };
+        let host_tid = unsafe { libc::syscall(libc::SYS_gettid) as i64 };
+
+        if tgid != host_pid || tid != host_tid {
+            return Ok(neg_errno(libc::ESRCH));
+        }
+
+        // todo : handle sigsegv properly : save for fuzzing mode.
+        if sig == libc::SIGSEGV {
+            Logger::info(format!(
+                "sys_tgkill() received signal SIGSEGV. Terminating emulation"
+            ));
+            vk.vstate = VState::Ended;
+            let _ = vk.uc.emu_stop();
+        }
+
+        if sig == libc::SIGKILL || sig == libc::SIGSTOP {
+            Logger::info(format!(
+                "sys_tgkill() received signal SIGKILL/SIGSTOP. Terminating emulation"
+            ));
+            vk.vstate = VState::Ended;
+            let _ = vk.uc.emu_stop();
+        }
+
+        return Ok(0);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (tgid, tid, sig);
+        Logger::warning(
+            "sys_tgkill() unsupported on this os. Ignoring signal and returning failure",
+        );
+        Ok(neg_errno(libc::ENOSYS))
+    }
+}

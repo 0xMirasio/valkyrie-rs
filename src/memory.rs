@@ -14,7 +14,7 @@ pub struct VMemRegion {
     pub start: u64,
     pub size: u64,
     pub prot: Prot,
-    pub info: &'static str,
+    pub info: String,
 }
 
 #[derive(Debug)]
@@ -53,14 +53,17 @@ impl VMemory {
         })
     }
 
-    pub fn map<D>(
+    pub fn map<D, S>(
         &mut self,
         uc: &mut Unicorn<'_, D>,
         addr: u64,
         size: u64,
         prot: Prot,
-        info: &'static str,
-    ) -> Result<()> {
+        info: S,
+    ) -> Result<()>
+    where
+        S: Into<String>,
+    {
         if size == 0 {
             return Err(ValkyrieError::BadConfig("mem.map size must be > 0"));
         }
@@ -72,7 +75,7 @@ impl VMemory {
             start: addr,
             size,
             prot,
-            info,
+            info: info.into(),
         });
 
         Ok(())
@@ -109,7 +112,10 @@ impl VMemory {
         }
 
         Logger::info("== Memory regions mappings  ==");
-        for (i, r) in self.regions.iter().enumerate() {
+        let mut sorted_regions = self.regions.iter().collect::<Vec<_>>();
+        sorted_regions.sort_by_key(|region| region.start);
+
+        for (i, r) in sorted_regions.iter().enumerate() {
             Logger::info(format!(
                 "#{i}: {:#x} - {:#x} (size={:#x}) prot={:?} info={}",
                 r.start,

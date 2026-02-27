@@ -7,6 +7,10 @@ license = "Apache"
 readme = "README.md"
 authors = ["0xMirasio"]
 
+[features]
+default = []
+libafl = ["dep:libafl", "dep:libafl_bolts"]
+
 [lib]
 crate-type = ["rlib", "cdylib"]
 
@@ -18,3 +22,5 @@ udbserver= "0.2.1"
 libc = "0.2.180"
 lief = "0.17.2"
 users = "0.11.0"
+libafl = { version = "0.15.3", optional = true }
+libafl_bolts = { version = "0.15.3", optional = true }

@@ -80,6 +80,9 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("clock_gettime", sys_clock_gettime),
     ("getrandom", sys_getrandom),
     ("readlink", sys_readlink),
+    ("newfstatat", sys_newfstatat),
+    ("getpid", sys_getpid),
+    ("tgkill", sys_tgkill),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {

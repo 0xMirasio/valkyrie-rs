@@ -232,7 +232,7 @@ impl Os for OsLinux {
         let end = if vk.cfg.exit_point != 0 {
             vk.cfg.exit_point
         } else {
-            0
+            u64::MAX
         };
 
         Logger::info(format!(

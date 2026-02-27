@@ -9,6 +9,7 @@ use libc::{c_char, c_int};
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::mem;
 #[cfg(target_os = "linux")]
 use std::os::unix::io::FromRawFd;
 use std::path::PathBuf;
@@ -469,3 +470,55 @@ pub fn sys_readlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 }
 
 // TODO : implement virtual proc mapper /sys with rootfs
+
+pub fn sys_newfstatat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let dirfd = sctx.arg0() as i64 as i32;
+    let pathname_ptr = sctx.arg1();
+    let statbuf_ptr = sctx.arg2();
+    let flags = sctx.arg3() as u32;
+
+    let file_name = read_guest_cstring(vk, pathname_ptr)?;
+    let abs_path: PathBuf = match get_path_at(vk, dirfd, &file_name) {
+        Some(p) => p,
+        None => return Ok(neg_errno(libc::EBADF)),
+    };
+
+    let c_path = match CString::new(abs_path.to_string_lossy().as_bytes()) {
+        Ok(s) => s,
+        Err(_) => return Ok(neg_errno(libc::EINVAL)),
+    };
+
+    Logger::debug(
+        format!("sys_newfstatat({}, flags={flags:#x})", abs_path.display()),
+        vk.cfg.verbose,
+    );
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("newfstatat not supported on this platform. syscall will return -1;");
+        return Ok(last_errno());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let ret = unsafe {
+            libc::fstatat(
+                0 as c_int,
+                c_path.as_ptr() as *const c_char,
+                &mut st as *mut libc::stat,
+                flags as c_int,
+            )
+        };
+        if ret == -1 {
+            return Ok(last_errno());
+        }
+
+        let st_len = mem::size_of::<libc::stat>();
+        let st_bytes =
+            unsafe { std::slice::from_raw_parts((&st as *const libc::stat).cast::<u8>(), st_len) };
+        vk.mem.write(&mut vk.uc, statbuf_ptr, st_bytes)?;
+
+        Ok(0)
+    }
+}
