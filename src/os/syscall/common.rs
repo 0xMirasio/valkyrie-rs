@@ -235,22 +235,18 @@ pub fn sys_tgkill(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
         // todo : handle sigsegv properly : save for fuzzing mode.
         if sig == libc::SIGSEGV {
-            Logger::info(format!(
-                "sys_tgkill() received signal SIGSEGV. Terminating emulation"
-            ));
+            Logger::info("sys_tgkill() received signal SIGSEGV. Terminating emulation");
             vk.vstate = VState::Ended;
             let _ = vk.uc.emu_stop();
         }
 
         if sig == libc::SIGKILL || sig == libc::SIGSTOP {
-            Logger::info(format!(
-                "sys_tgkill() received signal SIGKILL/SIGSTOP. Terminating emulation"
-            ));
+            Logger::info("sys_tgkill() received signal SIGKILL/SIGSTOP. Terminating emulation");
             vk.vstate = VState::Ended;
             let _ = vk.uc.emu_stop();
         }
 
-        return Ok(0);
+        Ok(0)
     }
 
     #[cfg(not(target_os = "linux"))]
