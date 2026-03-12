@@ -122,8 +122,7 @@ fn io_write_x86_64_oslinux_fileloader() {
     let content = fs::read(&output_path).expect("failed to read file written by guest");
     assert_eq!(
         content, output_message,
-        "unexpected content in {:?}: {content:?}",
-        output_path
+        "unexpected content in {output_path:?}: {content:?}"
     );
 
     VMemory::dump_stacks(&mut vk);
@@ -170,8 +169,7 @@ fn basic_common_x86_feed_file() {
     let content = fs::read(&output_path).expect("failed to read x86 file written by guest");
     assert_eq!(
         content, output_message,
-        "unexpected content in {:?}: {content:?}",
-        output_path
+        "unexpected content in {output_path:?}: {content:?}"
     );
 
     VMemory::dump_stacks(&mut vk);

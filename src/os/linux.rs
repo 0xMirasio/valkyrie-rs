@@ -233,8 +233,7 @@ impl Os for OsLinux {
         };
 
         Logger::info(format!(
-            "OsLinux: Starting emulation at entry point {:#x} / end={:#x}",
-            start, end
+            "OsLinux: Starting emulation at entry point {start:#x} / end={end:#x}"
         ));
 
         vk.mem.show_mappings();

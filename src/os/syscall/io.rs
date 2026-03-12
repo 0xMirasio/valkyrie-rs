@@ -639,16 +639,16 @@ fn stat_at(vk: &Valkyrie, dirfd: c_int, file_name: &str, flags: u32) -> Result<l
 #[cfg(target_os = "linux")]
 fn pack_linux_x86_stat64_le(st: &libc::stat) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(96);
-    bytes.extend_from_slice(&(st.st_dev as u64).to_le_bytes());
+    bytes.extend_from_slice(&st.st_dev.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&(st.st_ino as u32).to_le_bytes());
-    bytes.extend_from_slice(&(st.st_mode as u32).to_le_bytes());
+    bytes.extend_from_slice(&st.st_mode.to_le_bytes());
     bytes.extend_from_slice(&(st.st_nlink as u32).to_le_bytes());
-    bytes.extend_from_slice(&(st.st_uid as u32).to_le_bytes());
-    bytes.extend_from_slice(&(st.st_gid as u32).to_le_bytes());
-    bytes.extend_from_slice(&(st.st_rdev as u64).to_le_bytes());
+    bytes.extend_from_slice(&st.st_uid.to_le_bytes());
+    bytes.extend_from_slice(&st.st_gid.to_le_bytes());
+    bytes.extend_from_slice(&st.st_rdev.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
-    bytes.extend_from_slice(&(st.st_size as i64).to_le_bytes());
+    bytes.extend_from_slice(&st.st_size.to_le_bytes());
     bytes.extend_from_slice(&(st.st_blksize as u32).to_le_bytes());
     bytes.extend_from_slice(&(st.st_blocks as u64).to_le_bytes());
     bytes.extend_from_slice(&(st.st_atime as u32).to_le_bytes());
@@ -657,7 +657,7 @@ fn pack_linux_x86_stat64_le(st: &libc::stat) -> Vec<u8> {
     bytes.extend_from_slice(&(st.st_mtime_nsec as u32).to_le_bytes());
     bytes.extend_from_slice(&(st.st_ctime as u32).to_le_bytes());
     bytes.extend_from_slice(&(st.st_ctime_nsec as u32).to_le_bytes());
-    bytes.extend_from_slice(&(st.st_ino as u64).to_le_bytes());
+    bytes.extend_from_slice(&st.st_ino.to_le_bytes());
     bytes
 }
 
