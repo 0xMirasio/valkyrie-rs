@@ -141,12 +141,16 @@ pub fn get_cwd_path(vk: &Valkyrie) -> Result<PathBuf> {
 pub fn get_path_at(vk: &Valkyrie, dirfd: i32, file_name: &str) -> Option<PathBuf> {
     let stripped = file_name.trim();
 
+    if stripped.starts_with('/') {
+        let mut abs = PathBuf::from(&vk.cfg.rootfs);
+        abs.push(stripped.trim_start_matches('/'));
+        return Some(abs);
+    }
+
     let mut dir_path: PathBuf = if dirfd != AT_FDCWD {
         let table = fd_table().lock().ok()?;
         let df = table.files.get(&(dirfd as u64))?;
         df.path.clone()
-    } else if stripped.starts_with('/') {
-        PathBuf::from(&vk.cfg.rootfs)
     } else {
         get_cwd_path(vk).expect("Failed to get current working directory")
     };

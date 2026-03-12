@@ -712,7 +712,24 @@ pub fn get_reg<D>(uc: &mut Unicorn<'_, D>, reg: RegX86) -> Result<u64> {
 
 pub fn handle_x86_syscall(vk: &mut Valkyrie, addr: u64, size: u32) -> Result<()> {
     // int 0x80 = 0xCD 0x80
+    let step = if size == 0 { 2 } else { size as u64 };
+
+    // MOV Sreg, r/m16 ; we currently skip MOV GS,* to avoid selector faults
+    // until x86 TLS/GDT emulation is implemented.
     let insn = vk.mem.read(&mut vk.uc, addr, 2)?;
+    if insn[0] == 0x8E && ((insn[1] >> 3) & 0x7) == 0x5 {
+        Logger::debug(
+            format!("x86: skipping unsupported mov gs at pc={addr:#x}"),
+            vk.cfg.verbose,
+        );
+        vk.arch.regs.set_reg(
+            &mut vk.uc,
+            VRegister::X86(RegX86::EIP),
+            addr.saturating_add(step),
+        )?;
+        return Ok(());
+    }
+
     if insn != [0xCD, 0x80] {
         return Ok(());
     }
@@ -755,7 +772,6 @@ pub fn handle_x86_syscall(vk: &mut Valkyrie, addr: u64, size: u32) -> Result<()>
             vk.arch
                 .regs
                 .set_reg(&mut vk.uc, VRegister::X86(RegX86::EAX), 0)?;
-            let step = if size == 0 { 2 } else { size as u64 };
             vk.arch.regs.set_reg(
                 &mut vk.uc,
                 VRegister::X86(RegX86::EIP),

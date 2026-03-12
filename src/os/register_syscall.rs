@@ -60,9 +60,13 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("renameat", sys_renameat),
     ("statx", sys_statx),
     ("geteuid", sys_geteuid),
+    ("geteuid32", sys_geteuid),
     ("getuid", sys_getuid),
+    ("getuid32", sys_getuid),
     ("getegid", sys_getegid),
+    ("getegid32", sys_getegid),
     ("getgid", sys_getgid),
+    ("getgid32", sys_getgid),
     ("brk", sys_brk),
     ("arch_prctl", sys_arch_prctl),
     ("uname", sys_uname),
@@ -83,6 +87,10 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("newfstatat", sys_newfstatat),
     ("getpid", sys_getpid),
     ("tgkill", sys_tgkill),
+    ("dup", sys_dup),
+    ("fcntl", sys_fcntl),
+    ("fcntl64", sys_fcntl),
+    ("set_thread_area", sys_set_thread_area),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {

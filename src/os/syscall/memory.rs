@@ -112,15 +112,25 @@ fn prot_from_flags(prot: i32) -> Prot {
 }
 
 fn next_mmap_addr(vk: &Valkyrie, len: u64) -> u64 {
-    let max_end = vk
-        .mem
-        .regions
-        .iter()
-        .map(|region| region.start + region.size)
-        .max()
-        .unwrap_or(vk.mem.heap_addr_exit);
-    let addr = align_up(max_end + PAGE_SIZE as u64, PAGE_SIZE as u64);
-    align_up(addr + len, PAGE_SIZE as u64) - len
+    let page_size = PAGE_SIZE as u64;
+    let guard_gap = 0x1000_0000_u64;
+
+    let mut candidate = align_up(vk.mem.heap_addr_exit.saturating_add(guard_gap), page_size);
+
+    loop {
+        let candidate_end = candidate.saturating_add(len);
+        let overlap = vk.mem.regions.iter().find(|region| {
+            let region_end = region.start.saturating_add(region.size);
+            candidate < region_end && candidate_end > region.start
+        });
+
+        if let Some(region) = overlap {
+            candidate = align_up(region.start.saturating_add(region.size), page_size);
+            continue;
+        }
+
+        return candidate;
+    }
 }
 
 fn map_file_bytes(vk: &mut Valkyrie, addr: u64, size: u64, fd: u64, offset: u64) -> Result<u64> {

@@ -60,3 +60,8 @@ pub fn sys_get_robust_list(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> 
 pub fn sys_rseq(_vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {
     Ok(neg_errno(libc::ENOSYS))
 }
+
+// todo: track tls descriptor per-thread when threading support lands
+pub fn sys_set_thread_area(_vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {
+    Ok(neg_errno(libc::ENOSYS)) // make most of x86 libc_start_main elf halt. Need to fix this
+}

@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem;
 #[cfg(target_os = "linux")]
-use std::os::unix::io::FromRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
@@ -54,7 +54,16 @@ pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
                 Ok(n) => n,
                 Err(_) => return Ok(last_errno()),
             },
-            None => return Ok(neg_errno(libc::EBADF)),
+            None => {
+                drop(table);
+                let n = unsafe {
+                    libc::read(fd as i32, buffer.as_mut_ptr().cast::<libc::c_void>(), count)
+                };
+                if n < 0 {
+                    return Ok(last_errno());
+                }
+                n as usize
+            }
         }
     };
 
@@ -209,7 +218,16 @@ pub fn sys_write(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
                     Ok(n) => n,
                     Err(_) => return Ok(last_errno()),
                 },
-                None => return Ok(neg_errno(libc::EBADF)),
+                None => {
+                    drop(table);
+                    let n = unsafe {
+                        libc::write(fd as i32, buffer.as_ptr().cast::<libc::c_void>(), count)
+                    };
+                    if n < 0 {
+                        return Ok(last_errno());
+                    }
+                    n as usize
+                }
             }
         }
     };
@@ -260,7 +278,20 @@ pub fn sys_writev(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
             _ => match table_guard.as_mut() {
                 Some(table) => match table.files.get_mut(&fd) {
                     Some(vkf) => vkf.file.write(&buffer),
-                    None => return Ok(neg_errno(libc::EBADF)),
+                    None => {
+                        let count = unsafe {
+                            libc::write(
+                                fd as i32,
+                                buffer.as_ptr().cast::<libc::c_void>(),
+                                buffer.len(),
+                            )
+                        };
+                        if count < 0 {
+                            Err(io::Error::last_os_error())
+                        } else {
+                            Ok(count as usize)
+                        }
+                    }
                 },
                 None => return Ok(neg_errno(libc::EBADF)),
             },
@@ -298,8 +329,81 @@ pub fn sys_close(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     if table.files.remove(&fd).is_some() {
         Ok(0)
     } else {
-        Ok(neg_errno(libc::EBADF))
+        drop(table);
+
+        let ret = unsafe { libc::close(fd as i32) };
+        if ret == -1 { Ok(last_errno()) } else { Ok(0) }
     }
+}
+
+pub fn sys_dup(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let oldfd = sctx.arg0() as i32;
+
+    if oldfd < 0 {
+        return Ok(neg_errno(libc::EBADF));
+    }
+
+    let newfd = if oldfd <= 2 {
+        let fd = unsafe { libc::dup(oldfd) };
+        if fd == -1 {
+            return Ok(last_errno());
+        }
+        fd
+    } else {
+        let cloned = {
+            let table = fd_table().lock().unwrap();
+            let Some(vkf) = table.files.get(&(oldfd as u64)) else {
+                return Ok(neg_errno(libc::EBADF));
+            };
+
+            match vkf.file.try_clone() {
+                Ok(file) => (file, vkf.path.clone(), vkf.flags, vkf.mode),
+                Err(_) => return Ok(last_errno()),
+            }
+        };
+
+        let (file, path, flags, mode) = cloned;
+        let fd = file.as_raw_fd() as u64;
+
+        let mut table = fd_table().lock().unwrap();
+        table.files.insert(
+            fd,
+            VkFile {
+                file,
+                path,
+                flags,
+                mode,
+            },
+        );
+
+        fd as i32
+    };
+
+    Ok(newfd as u64)
+}
+
+pub fn sys_fcntl(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as i32;
+    let cmd = sctx.arg1() as i32;
+    let arg = sctx.arg2() as i32;
+
+    if fd < 0 {
+        return Ok(neg_errno(libc::EBADF));
+    }
+
+    let ret = unsafe { libc::fcntl(fd, cmd, arg) };
+    if ret == -1 {
+        return Ok(last_errno());
+    }
+
+    if cmd == libc::F_SETFL && fd > 2 {
+        let mut table = fd_table().lock().unwrap();
+        if let Some(vkf) = table.files.get_mut(&(fd as u64)) {
+            vkf.flags = arg as u64;
+        }
+    }
+
+    Ok(ret as u64)
 }
 
 pub fn sys_renameat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
@@ -478,20 +582,6 @@ pub fn sys_newfstatat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let flags = sctx.arg3() as u32;
 
     let file_name = read_guest_cstring(vk, pathname_ptr)?;
-    let abs_path: PathBuf = match get_path_at(vk, dirfd, &file_name) {
-        Some(p) => p,
-        None => return Ok(neg_errno(libc::EBADF)),
-    };
-
-    let c_path = match CString::new(abs_path.to_string_lossy().as_bytes()) {
-        Ok(s) => s,
-        Err(_) => return Ok(neg_errno(libc::EINVAL)),
-    };
-
-    Logger::debug(
-        format!("sys_newfstatat({}, flags={flags:#x})", abs_path.display()),
-        vk.cfg.verbose,
-    );
 
     #[cfg(not(target_os = "linux"))]
     {
@@ -502,14 +592,47 @@ pub fn sys_newfstatat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     #[cfg(target_os = "linux")]
     {
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        let ret = unsafe {
-            libc::fstatat(
-                0 as c_int,
-                c_path.as_ptr() as *const c_char,
-                &mut st as *mut libc::stat,
-                flags as c_int,
-            )
+        let ret = if file_name.is_empty() && (flags as i32 & libc::AT_EMPTY_PATH) != 0 {
+            let empty_path = b"\0";
+            Logger::debug(
+                format!("sys_newfstatat(dirfd={dirfd}, path=\"\", flags={flags:#x})"),
+                vk.cfg.verbose,
+            );
+
+            unsafe {
+                libc::fstatat(
+                    dirfd,
+                    empty_path.as_ptr().cast::<c_char>(),
+                    &mut st as *mut libc::stat,
+                    flags as c_int,
+                )
+            }
+        } else {
+            let abs_path: PathBuf = match get_path_at(vk, dirfd, &file_name) {
+                Some(p) => p,
+                None => return Ok(neg_errno(libc::EBADF)),
+            };
+
+            let c_path = match CString::new(abs_path.to_string_lossy().as_bytes()) {
+                Ok(s) => s,
+                Err(_) => return Ok(neg_errno(libc::EINVAL)),
+            };
+
+            Logger::debug(
+                format!("sys_newfstatat({}, flags={flags:#x})", abs_path.display()),
+                vk.cfg.verbose,
+            );
+
+            unsafe {
+                libc::fstatat(
+                    libc::AT_FDCWD,
+                    c_path.as_ptr() as *const c_char,
+                    &mut st as *mut libc::stat,
+                    flags as c_int,
+                )
+            }
         };
+
         if ret == -1 {
             return Ok(last_errno());
         }

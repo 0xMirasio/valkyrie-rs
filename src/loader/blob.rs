@@ -40,8 +40,6 @@ impl Loader for LoaderBlob {
             .map(&mut vk.uc, entry, code_size, Prot::ALL, "[code]")?;
         vk.mem.write(&mut vk.uc, entry, &vk.cfg.baremetal_code)?;
 
-        println!("code mapped");
-
         vk.mem.code_addr_start = vk.cfg.code_base_address;
         vk.mem.code_addr_exit = vk.cfg.code_base_address + code_size;
 
@@ -71,8 +69,6 @@ impl Loader for LoaderBlob {
             "[stack]",
         )?;
 
-        println!("stack mapped");
-
         // Map Heap
         let heap_addr = align_up(vk.mem.stack_addr_exit + PAGE_SIZE as u64, PAGE_SIZE as u64);
         let heap_size = vk.cfg.heap_size;
@@ -91,8 +87,6 @@ impl Loader for LoaderBlob {
             Prot::ALL,
             "[heap]",
         )?;
-
-        println!("heap mapped");
 
         if vk.cfg.verbose {
             Logger::debug(
