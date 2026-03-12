@@ -180,10 +180,9 @@ pub fn sys_clock_gettime64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> 
         return Ok(last_errno());
     }
 
+    vk.mem.write(&mut vk.uc, tp, &(ts.tv_sec).to_le_bytes())?;
     vk.mem
-        .write(&mut vk.uc, tp, &(ts.tv_sec as i64).to_le_bytes())?;
-    vk.mem
-        .write(&mut vk.uc, tp + 8, &(ts.tv_nsec as i64).to_le_bytes())?;
+        .write(&mut vk.uc, tp + 8, &(ts.tv_nsec).to_le_bytes())?;
 
     Ok(0)
 }
