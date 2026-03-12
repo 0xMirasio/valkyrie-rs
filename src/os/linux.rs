@@ -2,6 +2,7 @@ use crate::Valkyrie;
 use crate::arch::regs::VRegister;
 use crate::arch::x86::RegX86;
 use crate::arch::x86_64::RegX86_64;
+use crate::common::zero_fill;
 use crate::error::Result;
 use crate::logger::Logger;
 use crate::os::Os;
@@ -14,6 +15,12 @@ use unicorn_engine::{RegisterX86, uc_error, uc_reg_write, uc_x86_mmr};
 const AT_NULL: u64 = 0;
 const AT_PAGESZ: u64 = 6;
 const AT_RANDOM: u64 = 25;
+
+pub(crate) const X86_GDT_ENTRY_TLS_MIN: u32 = 6;
+pub(crate) const X86_GDT_ENTRY_TLS_ENTRIES: u32 = 3;
+pub(crate) const X86_GDT_ENTRY_TLS_MAX: u32 = X86_GDT_ENTRY_TLS_MIN + X86_GDT_ENTRY_TLS_ENTRIES - 1;
+const X86_GDT_LIMIT: u32 = 0x0fff;
+const X86_TLS_STUB_OFFSET: u64 = 0x100;
 
 #[derive(Debug, Clone)]
 pub struct OsLinux {
@@ -34,88 +41,43 @@ impl OsLinux {
 
 impl OsLinux {
     #[allow(dead_code)]
-    fn setup_tls_i386(&self, vk: &mut crate::Valkyrie, tls_base: u64) -> crate::error::Result<()> {
-        let gdt_addr = vk.mem.tls_addr_start;
-        let gdt_limit: u32 = 0x0fff;
+    fn setup_tls_i386(&self, vk: &mut crate::Valkyrie) -> crate::error::Result<()> {
+        let gdt_addr = x86_gdt_addr(vk);
+        zero_fill(&mut vk.uc, gdt_addr, X86_GDT_LIMIT as u64 + 1)?;
 
-        let desc_tls = gdt_desc(tls_base as u32, 0xFFFFF, 0xF2, 0xC);
-        let desc_data = gdt_desc(0, 0xFFFFF, 0xF2, 0xC);
-        let desc_code = gdt_desc(0, 0xFFFFF, 0xFA, 0xC);
+        install_x86_gdtr(vk)?;
 
-        vk.mem.write(&mut vk.uc, gdt_addr + 8, &desc_tls)?;
-        vk.mem.write(&mut vk.uc, gdt_addr + 16, &desc_data)?;
-        vk.mem.write(&mut vk.uc, gdt_addr + 24, &desc_code)?;
-
-        let gdtr = uc_x86_mmr {
-            selector: 0,
-            base: gdt_addr,
-            limit: gdt_limit,
-            flags: 0,
-        };
-
-        let err = unsafe {
-            uc_reg_write(
-                vk.uc.get_handle(),
-                RegisterX86::GDTR as i32,
-                (&gdtr as *const uc_x86_mmr).cast::<c_void>(),
-            )
-        };
-
-        if err != uc_error::OK {
-            return Err(crate::error::ValkyrieError::UnicornGeneralError(
-                "failed to set GDTR",
-            ));
-        }
-
-        let gs_sel = selector(1, 3) as u64;
-        let ds_sel = selector(2, 3) as u64;
-        let cs_sel = selector(3, 3) as u64;
-
-        vk.arch
-            .regs
-            .set_reg(&mut vk.uc, VRegister::X86(RegX86::GS), gs_sel)?;
-
-        vk.arch
-            .regs
-            .set_reg(&mut vk.uc, VRegister::X86(RegX86::DS), ds_sel)?;
-
-        vk.arch
-            .regs
-            .set_reg(&mut vk.uc, VRegister::X86(RegX86::ES), ds_sel)?;
-
-        vk.arch
-            .regs
-            .set_reg(&mut vk.uc, VRegister::X86(RegX86::SS), ds_sel)?;
-        vk.arch
-            .regs
-            .set_reg(&mut vk.uc, VRegister::X86(RegX86::CS), cs_sel)?;
+        // Unicorn starts these i386 guests effectively at CPL0, so bootstrap with
+        // flat kernel selectors while keeping user descriptors available for TLS loads.
+        x86_write_gdt_entry(vk, 1, gdt_desc(0, 0xFFFFF, 0x9A, 0xC))?;
+        x86_write_gdt_entry(vk, 2, gdt_desc(0, 0xFFFFF, 0x92, 0xC))?;
+        x86_write_gdt_entry(vk, 3, gdt_desc(0, 0xFFFFF, 0xFA, 0xC))?;
+        x86_write_gdt_entry(vk, 4, gdt_desc(0, 0xFFFFF, 0xF2, 0xC))?;
 
         Ok(())
     }
 
     fn setup_tls_minimal(&self, vk: &mut Valkyrie) -> Result<()> {
         let tls_size = vk.mem.tls_addr_exit - vk.mem.tls_addr_start;
+        let tls_prot = match vk.cfg.arch {
+            Arch::X86 => Prot::ALL,
+            Arch::X86_64 => Prot::READ | Prot::WRITE,
+        };
 
         vk.mem.map(
             &mut vk.uc,
             vk.mem.tls_addr_start,
             tls_size,
-            Prot::READ | Prot::WRITE,
+            tls_prot,
             "[tls]",
         )?;
 
-        let tls_base = vk.mem.tls_addr_start + 2 * PAGE_SIZE as u64;
-
         match vk.cfg.arch {
             Arch::X86 => {
-                Logger::warning(
-                    "TLS setup not implemented for x86. Program will likely crash if segments GS/FS are used.",
-                );
-                // todo : fix this
-                //self.setup_tls_i386(vk, tls_base)?;
-                return Ok(());
+                self.setup_tls_i386(vk)?;
             }
             Arch::X86_64 => {
+                let tls_base = vk.mem.tls_addr_start + 2 * PAGE_SIZE as u64;
                 vk.arch
                     .regs
                     .set_reg(&mut vk.uc, VRegister::X86_64(RegX86_64::FsBase), tls_base)?;
@@ -213,6 +175,34 @@ impl OsLinux {
             Arch::X86_64 => self.setup_stack_x86_64(vk),
         }
     }
+
+    fn setup_x86_entry_stub(&self, vk: &mut Valkyrie) -> Result<u64> {
+        let stub_addr = vk.mem.tls_addr_start + X86_TLS_STUB_OFFSET;
+        let target = vk.cfg.entry_point;
+        let data_selector = selector(2, 0);
+        let mut stub = Vec::with_capacity(15);
+
+        stub.extend_from_slice(&[0x66, 0xB8]);
+        stub.extend_from_slice(&data_selector.to_le_bytes());
+        stub.extend_from_slice(&[0x8E, 0xD8]);
+        stub.extend_from_slice(&[0x8E, 0xC0]);
+        stub.extend_from_slice(&[0x8E, 0xD0]);
+        stub.push(0xE9);
+
+        let jump_src = stub_addr + stub.len() as u64 + 4;
+        let rel = i64::try_from(target)
+            .and_then(|target| i64::try_from(jump_src).map(|jump_src| target - jump_src))
+            .map_err(|_| {
+                crate::error::ValkyrieError::UnicornGeneralError("x86 entry target overflow")
+            })?;
+        let rel = i32::try_from(rel).map_err(|_| {
+            crate::error::ValkyrieError::UnicornGeneralError("x86 entry jump out of range")
+        })?;
+        stub.extend_from_slice(&rel.to_le_bytes());
+
+        vk.mem.write(&mut vk.uc, stub_addr, &stub)?;
+        Ok(stub_addr)
+    }
 }
 
 impl Os for OsLinux {
@@ -229,6 +219,13 @@ impl Os for OsLinux {
     fn run(&self, vk: &mut Valkyrie) -> Result<()> {
         vk.vstate = VState::Running;
 
+        self.setup_tls_minimal(vk)?;
+        self.setup_stack(vk)?;
+
+        let start = match vk.cfg.arch {
+            Arch::X86 => self.setup_x86_entry_stub(vk)?,
+            Arch::X86_64 => vk.cfg.entry_point,
+        };
         let end = if vk.cfg.exit_point != 0 {
             vk.cfg.exit_point
         } else {
@@ -237,18 +234,12 @@ impl Os for OsLinux {
 
         Logger::info(format!(
             "OsLinux: Starting emulation at entry point {:#x} / end={:#x}",
-            vk.cfg.entry_point, end
+            start, end
         ));
-
-        self.setup_tls_minimal(vk)?;
-        self.setup_stack(vk)?;
 
         vk.mem.show_mappings();
 
-        if let Err(err) = vk
-            .uc
-            .emu_start(vk.cfg.entry_point, end, vk.cfg.timeout, vk.cfg.count)
-        {
+        if let Err(err) = vk.uc.emu_start(start, end, vk.cfg.timeout, vk.cfg.count) {
             vk.panic_with_unicorn_context(err);
         }
 
@@ -283,4 +274,46 @@ fn gdt_desc(base: u32, limit: u32, access: u8, flags: u8) -> [u8; 8] {
 
 fn selector(idx: u16, rpl: u16) -> u16 {
     (idx << 3) | (rpl & 0x3)
+}
+
+pub(crate) fn x86_gdt_addr(vk: &Valkyrie) -> u64 {
+    vk.mem.tls_addr_start
+}
+
+pub(crate) fn x86_gdt_entry_addr(vk: &Valkyrie, entry_number: u32) -> u64 {
+    x86_gdt_addr(vk) + (entry_number as u64 * 8)
+}
+
+pub(crate) fn x86_write_gdt_entry(
+    vk: &mut Valkyrie,
+    entry_number: u32,
+    descriptor: [u8; 8],
+) -> Result<()> {
+    let entry_addr = x86_gdt_entry_addr(vk, entry_number);
+    vk.mem.write(&mut vk.uc, entry_addr, &descriptor)
+}
+
+fn install_x86_gdtr(vk: &mut Valkyrie) -> Result<()> {
+    let gdtr = uc_x86_mmr {
+        selector: 0,
+        base: x86_gdt_addr(vk),
+        limit: X86_GDT_LIMIT,
+        flags: 0,
+    };
+
+    let err = unsafe {
+        uc_reg_write(
+            vk.uc.get_handle(),
+            RegisterX86::GDTR as i32,
+            (&gdtr as *const uc_x86_mmr).cast::<c_void>(),
+        )
+    };
+
+    if err != uc_error::OK {
+        return Err(crate::error::ValkyrieError::UnicornGeneralError(
+            "failed to set GDTR",
+        ));
+    }
+
+    Ok(())
 }

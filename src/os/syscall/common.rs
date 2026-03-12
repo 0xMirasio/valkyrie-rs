@@ -164,6 +164,30 @@ pub fn sys_clock_gettime(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(0)
 }
 
+pub fn sys_clock_gettime64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let clock_id = sctx.arg0() as libc::clockid_t;
+    let tp = sctx.arg1();
+    if tp == 0 {
+        return Ok(neg_errno(libc::EFAULT));
+    }
+
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { libc::clock_gettime(clock_id, &mut ts as *mut libc::timespec) };
+    if rc != 0 {
+        return Ok(last_errno());
+    }
+
+    vk.mem
+        .write(&mut vk.uc, tp, &(ts.tv_sec as i64).to_le_bytes())?;
+    vk.mem
+        .write(&mut vk.uc, tp + 8, &(ts.tv_nsec as i64).to_le_bytes())?;
+
+    Ok(0)
+}
+
 pub fn sys_getrandom(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let buf_addr = sctx.arg0();
     let count = sctx.arg1() as usize;
@@ -189,6 +213,35 @@ pub fn sys_getrandom(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         vk.mem.write(&mut vk.uc, buf_addr, &buffer)?;
         Ok(count as u64)
     }
+}
+
+pub fn sys_lookup_dcookie(_vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {
+    Ok(neg_errno(libc::ENOSYS))
+}
+
+pub fn sys_ugetrlimit(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let resource = sctx.arg0() as libc::__rlimit_resource_t;
+    let rlim_addr = sctx.arg1();
+    if rlim_addr == 0 {
+        return Ok(neg_errno(libc::EFAULT));
+    }
+
+    let mut lim = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let rc = unsafe { libc::getrlimit(resource, &mut lim as *mut libc::rlimit) };
+    if rc != 0 {
+        return Ok(last_errno());
+    }
+
+    let cur = lim.rlim_cur.min(u32::MAX as libc::rlim_t) as u32;
+    let max = lim.rlim_max.min(u32::MAX as libc::rlim_t) as u32;
+    vk.mem.write(&mut vk.uc, rlim_addr, &cur.to_le_bytes())?;
+    vk.mem
+        .write(&mut vk.uc, rlim_addr + 4, &max.to_le_bytes())?;
+
+    Ok(0)
 }
 
 // TODO : implement resource limits properly

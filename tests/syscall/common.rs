@@ -27,8 +27,6 @@ fn basic_common_x64_feed_elf_static() {
     VMemory::dump_stacks(&mut vk);
 }
 
-// TODO : fix basic_memory_x86_feed_elf_static (gdt problems)
-/*
 #[test]
 fn basic_common_x86_feed_elf_static() {
     let rootfs_path = Path::new("/");
@@ -51,6 +49,11 @@ fn basic_common_x86_feed_elf_static() {
 
     let mut vk = Valkyrie::new(cfg).unwrap();
     vk.run().unwrap();
+    assert_eq!(
+        vk.exit_status,
+        Some(0),
+        "guest exited with unexpected status: {:?}",
+        vk.exit_status
+    );
     VMemory::dump_stacks(&mut vk);
 }
-*/
