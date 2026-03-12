@@ -77,22 +77,42 @@ fn write_blob_fixture(path: &Path, blob: &[u8]) {
     fs::write(path, blob).expect("failed to write raw blob fixture");
 }
 
+fn linux_rootfs(arch: Arch) -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rootfs");
+    match arch {
+        Arch::X86 => root.join("x86_linux"),
+        Arch::X86_64 => root.join("x8664_linux"),
+    }
+}
+
+fn linux_rootfs_glibc(arch: Arch) -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rootfs");
+    match arch {
+        Arch::X86 => root.join("x86_linux_glibc2.39"),
+        Arch::X86_64 => root.join("x8664_linux_glibc2.39"),
+    }
+}
+
 #[test]
 fn io_write_x86_64_oslinux_fileloader() {
-    let rootfs_path = Path::new("/");
+    let rootfs_path = linux_rootfs(Arch::X86_64);
     let fixture_path = std::env::temp_dir().join(format!(
         "valkyrie_feed_file_{}_{}.bin",
         std::process::id(),
         std::thread::current().name().unwrap_or("fileloader")
     ));
-    let output_path = PathBuf::from("/tmp/valkyrie_feed_file_output.txt");
+    let guest_output_path = "/tmp/valkyrie_feed_file_output.txt";
+    let output_path = rootfs_path.join(guest_output_path.trim_start_matches('/'));
     let output_message = b"feed-file-ok\n";
-    let guest_output_path = output_path
-        .to_str()
-        .expect("expected UTF-8 temp path for guest output");
 
     let _ = fs::remove_file(&fixture_path);
     let _ = fs::remove_file(&output_path);
+    fs::create_dir_all(
+        output_path
+            .parent()
+            .expect("expected host output file parent directory"),
+    )
+    .expect("failed to create rootfs /tmp for x86_64 feed_file test");
 
     let blob = build_x86_64_feed_file_blob(guest_output_path, output_message);
     write_blob_fixture(&fixture_path, &blob);
@@ -133,14 +153,21 @@ fn io_write_x86_64_oslinux_fileloader() {
 
 #[test]
 fn basic_common_x86_feed_file() {
-    let rootfs_path = Path::new("/");
+    let rootfs_path = linux_rootfs(Arch::X86);
     let fixture_path =
         std::env::temp_dir().join(format!("valkyrie_feed_file_x86_{}.bin", std::process::id()));
-    let output_path = PathBuf::from("/tmp/valkyrie_x86_feed_file_output.txt");
+    let guest_output_path = "/tmp/valkyrie_x86_feed_file_output.txt";
+    let output_path = rootfs_path.join(guest_output_path.trim_start_matches('/'));
     let output_message = b"x86-feed-file-ok\n";
 
     let _ = fs::remove_file(&fixture_path);
     let _ = fs::remove_file(&output_path);
+    fs::create_dir_all(
+        output_path
+            .parent()
+            .expect("expected host output file parent directory"),
+    )
+    .expect("failed to create rootfs /tmp for x86 feed_file test");
 
     write_blob_fixture(&fixture_path, &X86_TLS_FEED_FILE_BLOB);
 
@@ -176,4 +203,68 @@ fn basic_common_x86_feed_file() {
 
     fs::remove_file(&fixture_path).expect("failed to remove x86 raw blob fixture");
     fs::remove_file(&output_path).expect("failed to remove x86 guest output file");
+}
+
+#[test]
+fn basic_common_x86_64_feed_elf_dynamic() {
+    let rootfs_path = linux_rootfs_glibc(Arch::X86_64);
+    let common_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("examples_src")
+        .join("build")
+        .join("common_linux_64");
+
+    let cfg = ValkyrieConfig::new(
+        Arch::X86_64,
+        OsType::Linux,
+        rootfs_path.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .verbose(true)
+    .feed_elf(common_bin_path)
+    .unwrap();
+
+    let mut vk = Valkyrie::new(cfg).unwrap();
+    vk.run().unwrap();
+
+    assert_eq!(
+        vk.exit_status,
+        Some(0),
+        "guest exited with unexpected status: {:?}",
+        vk.exit_status
+    );
+
+    VMemory::dump_stacks(&mut vk);
+}
+
+#[test]
+fn basic_common_x86_feed_elf_dynamic() {
+    let rootfs_path = linux_rootfs_glibc(Arch::X86);
+    let common_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("examples_src")
+        .join("build")
+        .join("common_linux_32");
+
+    let cfg = ValkyrieConfig::new(
+        Arch::X86,
+        OsType::Linux,
+        rootfs_path.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .verbose(true)
+    .feed_elf(common_bin_path)
+    .unwrap();
+
+    let mut vk = Valkyrie::new(cfg).unwrap();
+    vk.run().unwrap();
+
+    assert_eq!(
+        vk.exit_status,
+        Some(0),
+        "guest exited with unexpected status: {:?}",
+        vk.exit_status
+    );
+
+    VMemory::dump_stacks(&mut vk);
 }

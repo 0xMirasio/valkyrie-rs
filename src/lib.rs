@@ -44,6 +44,7 @@ pub struct Valkyrie {
     pub exit_trap_hook: Option<unicorn_engine::UcHookId>, // exit trap hook id (for baremetal)
     pub initial_sp: u64,                           // initial stack pointer
     pub exit_status: Option<u64>,                  // guest exit status
+    pub elf_auxv: Option<loader::elf::ElfAuxvInfo>, // ELF loader metadata for Linux startup
     pub linux_creds: LinuxCreds,                   // Linux credentials manager
 }
 
@@ -84,6 +85,7 @@ impl Valkyrie {
             exit_trap_hook: None,
             initial_sp: 0,
             exit_status: None,
+            elf_auxv: None,
             linux_creds: LinuxCreds::from_host(),
         };
 

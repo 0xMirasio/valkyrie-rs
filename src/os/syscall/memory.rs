@@ -186,6 +186,11 @@ pub fn sys_mmap(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         addr
     };
 
+    if use_fixed {
+        let _ = vk.uc.mem_unmap(map_addr, map_len);
+        vk.mem.remove_range(map_addr, map_len);
+    }
+
     let uc_prot = prot_from_flags(prot);
     if vk
         .mem
@@ -266,6 +271,8 @@ pub fn sys_munmap(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     if vk.uc.mem_unmap(addr, unmap_len).is_err() {
         return Ok(neg_errno(libc::EINVAL));
     }
+
+    vk.mem.remove_range(addr, unmap_len);
 
     Ok(0)
 }

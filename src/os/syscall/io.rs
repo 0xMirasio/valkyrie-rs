@@ -8,7 +8,7 @@ use crate::os::register_syscall::SubCtx;
 use libc::{c_char, c_int};
 use std::ffi::CString;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::mem;
 #[cfg(target_os = "linux")]
 use std::os::unix::io::{AsRawFd, FromRawFd};
@@ -82,6 +82,79 @@ pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(bytes_read as u64)
 }
 
+pub fn sys_pread64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0();
+    let buf_addr = sctx.arg1();
+    let count = sctx.arg2() as usize;
+    let offset = match vk.cfg.arch {
+        crate::vtype::Arch::X86 => sctx.arg3() | (sctx.arg4() << 32),
+        crate::vtype::Arch::X86_64 => sctx.arg3(),
+    };
+
+    if count == 0 {
+        return Ok(0);
+    }
+
+    let mut buffer = vec![0u8; count];
+
+    let bytes_read = {
+        let mut table = fd_table().lock().unwrap();
+        match table.files.get_mut(&fd) {
+            Some(vkf) => {
+                let mut file = match vkf.file.try_clone() {
+                    Ok(file) => file,
+                    Err(_) => return Ok(neg_errno(libc::EIO)),
+                };
+                if file.seek(std::io::SeekFrom::Start(offset)).is_err() {
+                    return Ok(neg_errno(libc::EIO));
+                }
+                match file.read(&mut buffer) {
+                    Ok(n) => n,
+                    Err(_) => return Ok(last_errno()),
+                }
+            }
+            None => {
+                drop(table);
+                #[cfg(target_os = "linux")]
+                {
+                    let n = unsafe {
+                        libc::pread64(
+                            fd as i32,
+                            buffer.as_mut_ptr().cast::<libc::c_void>(),
+                            count,
+                            offset as libc::off64_t,
+                        )
+                    };
+                    if n < 0 {
+                        return Ok(last_errno());
+                    }
+                    n as usize
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    return Ok(neg_errno(libc::ENOSYS));
+                }
+            }
+        }
+    };
+
+    let preview_len = bytes_read.min(10).min(buffer.len());
+    let preview = String::from_utf8_lossy(&buffer[..preview_len]);
+
+    Logger::debug(
+        format!(
+            "sys_pread64(fd={fd}, count={count}, offset={offset:#x}) => {bytes_read} ({preview:?})"
+        ),
+        vk.cfg.verbose,
+    );
+
+    if bytes_read > 0 {
+        vk.mem.write(&mut vk.uc, buf_addr, &buffer[..bytes_read])?;
+    }
+
+    Ok(bytes_read as u64)
+}
+
 pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     // open(const char *pathname, int flags, mode_t mode)
     let path_ptr = sctx.arg0();
@@ -139,6 +212,57 @@ pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 
     Ok(fd as u64)
+}
+
+pub fn sys_access(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let path_ptr = sctx.arg0();
+    let mode = sctx.arg1() as i32;
+
+    let path = read_guest_cstring(vk, path_ptr)?;
+    let host_path = resolve_guest_path(vk, &path);
+
+    Logger::debug(
+        format!("sys_access(path={}, mode={mode:#x})", host_path.display()),
+        vk.cfg.verbose,
+    );
+
+    let c_path = match CString::new(host_path.to_string_lossy().as_bytes()) {
+        Ok(s) => s,
+        Err(_) => return Ok(neg_errno(libc::EINVAL)),
+    };
+
+    let ret = unsafe { libc::access(c_path.as_ptr() as *const c_char, mode) };
+    if ret == -1 {
+        return Ok(last_errno());
+    }
+
+    Ok(0)
+}
+
+pub fn sys_fstat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0();
+    let statbuf_ptr = sctx.arg1();
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("fstat not supported on this platform. syscall will return -1;");
+        return Ok(last_errno());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let ret = unsafe { libc::fstat(fd as c_int, &mut st as *mut libc::stat) };
+        if ret == -1 {
+            return Ok(last_errno());
+        }
+
+        let st_len = mem::size_of::<libc::stat>();
+        let st_bytes =
+            unsafe { std::slice::from_raw_parts((&st as *const libc::stat).cast::<u8>(), st_len) };
+        vk.mem.write(&mut vk.uc, statbuf_ptr, st_bytes)?;
+        Ok(0)
+    }
 }
 
 pub fn sys_openat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
@@ -498,18 +622,6 @@ pub fn sys_statx(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let statx_buf_addr = sctx.arg4();
 
     let file_name = read_guest_cstring(vk, file_name_addr)?;
-    let abs_path: PathBuf = match get_path_at(vk, dfd, &file_name) {
-        Some(p) => p,
-        None => return Ok(neg_errno(libc::EBADF)),
-    };
-
-    let c_path = match CString::new(abs_path.to_string_lossy().as_bytes()) {
-        Ok(s) => s,
-        Err(_) => return Ok(neg_errno(libc::EINVAL)),
-    };
-
-    Logger::debug(format!("sys_statx({})", abs_path.display()), vk.cfg.verbose);
-
     let mut st: Statx = Statx::default();
 
     // int statx(int dirfd, const char *pathname, int flags,
@@ -518,16 +630,45 @@ pub fn sys_statx(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     #[cfg(target_os = "linux")]
     {
-        _ret = unsafe {
-            libc::syscall(
-                libc::SYS_statx as libc::c_long,
-                0 as c_int,
-                c_path.as_ptr() as *const c_char,
-                flags as c_int,
-                mask as libc::c_uint,
-                &mut st as *mut Statx,
-            )
-        };
+        if file_name.is_empty() && (flags as i32 & libc::AT_EMPTY_PATH) != 0 {
+            let empty_path = b"\0";
+            Logger::debug(
+                format!("sys_statx(dirfd={dfd}, path=\"\", flags={flags:#x})"),
+                vk.cfg.verbose,
+            );
+            _ret = unsafe {
+                libc::syscall(
+                    libc::SYS_statx as libc::c_long,
+                    dfd,
+                    empty_path.as_ptr() as *const c_char,
+                    flags as c_int,
+                    mask as libc::c_uint,
+                    &mut st as *mut Statx,
+                )
+            };
+        } else {
+            let abs_path: PathBuf = match get_path_at(vk, dfd, &file_name) {
+                Some(p) => p,
+                None => return Ok(neg_errno(libc::EBADF)),
+            };
+
+            let c_path = match CString::new(abs_path.to_string_lossy().as_bytes()) {
+                Ok(s) => s,
+                Err(_) => return Ok(neg_errno(libc::EINVAL)),
+            };
+
+            Logger::debug(format!("sys_statx({})", abs_path.display()), vk.cfg.verbose);
+            _ret = unsafe {
+                libc::syscall(
+                    libc::SYS_statx as libc::c_long,
+                    libc::AT_FDCWD,
+                    c_path.as_ptr() as *const c_char,
+                    flags as c_int,
+                    mask as libc::c_uint,
+                    &mut st as *mut Statx,
+                )
+            };
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -554,6 +695,21 @@ pub fn sys_readlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 
     let path = read_guest_cstring(vk, path_ptr)?;
+
+    if path == "/proc/self/exe" {
+        let target = vk
+            .cfg
+            .elf_file
+            .as_deref()
+            .unwrap_or("/proc/self/exe")
+            .as_bytes()
+            .to_vec();
+        let count = target.len().min(buf_size);
+        Logger::debug("sys_readlink(/proc/self/exe)", vk.cfg.verbose);
+        vk.mem.write(&mut vk.uc, buf_addr, &target[..count])?;
+        return Ok(count as u64);
+    }
+
     let host_path = resolve_guest_path(vk, &path);
 
     Logger::debug(

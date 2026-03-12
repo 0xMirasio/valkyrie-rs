@@ -187,6 +187,43 @@ impl VMemory {
             .find(|region| addr >= region.start && addr < region.start + region.size)
     }
 
+    pub fn remove_range(&mut self, addr: u64, size: u64) {
+        if size == 0 {
+            return;
+        }
+
+        let end = addr.saturating_add(size);
+        let mut updated = Vec::with_capacity(self.regions.len());
+
+        for region in self.regions.drain(..) {
+            let region_end = region.start.saturating_add(region.size);
+            if end <= region.start || addr >= region_end {
+                updated.push(region);
+                continue;
+            }
+
+            if addr > region.start {
+                updated.push(VMemRegion {
+                    start: region.start,
+                    size: addr.saturating_sub(region.start),
+                    prot: region.prot,
+                    info: region.info.clone(),
+                });
+            }
+
+            if end < region_end {
+                updated.push(VMemRegion {
+                    start: end,
+                    size: region_end.saturating_sub(end),
+                    prot: region.prot,
+                    info: region.info,
+                });
+            }
+        }
+
+        self.regions = updated;
+    }
+
     pub fn show_instructions(vk: &mut Valkyrie, addr: u64, size: usize) -> Result<()> {
         if size == 0 {
             return Ok(());

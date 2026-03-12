@@ -5,7 +5,7 @@ use valkyrie_rs::{VMemory, Valkyrie, ValkyrieConfig};
 
 #[test]
 fn basic_common_x64_feed_elf_static() {
-    let rootfs_path = Path::new("/");
+    let rootfs_path = crate::linux_rootfs(Arch::X86_64);
     let common_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("examples_src")
@@ -29,7 +29,7 @@ fn basic_common_x64_feed_elf_static() {
 
 #[test]
 fn basic_common_x86_feed_elf_static() {
-    let rootfs_path = Path::new("/");
+    let rootfs_path = crate::linux_rootfs(Arch::X86);
     let common_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("examples_src")

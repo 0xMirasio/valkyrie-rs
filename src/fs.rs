@@ -161,9 +161,17 @@ pub fn get_path_at(vk: &Valkyrie, dirfd: i32, file_name: &str) -> Option<PathBuf
 }
 
 pub fn read_guest_cstring(vk: &mut Valkyrie, addr: u64) -> Result<String> {
-    let bytes = vk.mem.read(&mut vk.uc, addr, MAX_PATH_LEN)?;
-    let nul_pos = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    Ok(String::from_utf8_lossy(&bytes[..nul_pos]).to_string())
+    let mut bytes = Vec::new();
+
+    for offset in 0..MAX_PATH_LEN {
+        let byte = vk.mem.read(&mut vk.uc, addr + offset as u64, 1)?;
+        if byte[0] == 0 {
+            break;
+        }
+        bytes.push(byte[0]);
+    }
+
+    Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
 pub fn resolve_guest_path(vk: &Valkyrie, path: &str) -> PathBuf {

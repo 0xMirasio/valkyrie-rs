@@ -13,8 +13,20 @@ use unicorn_engine::unicorn_const::Prot;
 use unicorn_engine::{RegisterX86, uc_error, uc_reg_write, uc_x86_mmr};
 
 const AT_NULL: u64 = 0;
+const AT_PHDR: u64 = 3;
+const AT_PHENT: u64 = 4;
+const AT_PHNUM: u64 = 5;
 const AT_PAGESZ: u64 = 6;
+const AT_BASE: u64 = 7;
+const AT_ENTRY: u64 = 9;
+const AT_UID: u64 = 11;
+const AT_EUID: u64 = 12;
+const AT_GID: u64 = 13;
+const AT_EGID: u64 = 14;
+const AT_CLKTCK: u64 = 17;
+const AT_SECURE: u64 = 23;
 const AT_RANDOM: u64 = 25;
+const AT_EXECFN: u64 = 31;
 
 pub(crate) const X86_GDT_ENTRY_TLS_MIN: u32 = 6;
 pub(crate) const X86_GDT_ENTRY_TLS_ENTRIES: u32 = 3;
@@ -95,29 +107,24 @@ impl OsLinux {
         let at_random_ptr = sp;
         vk.uc.mem_write(sp, &random_bytes)?;
 
-        let argv0 = b"valkyrie-rs\0";
-        sp -= argv0.len() as u64;
+        let argv0 = vk
+            .elf_auxv
+            .as_ref()
+            .map(|info| info.execfn.as_bytes())
+            .unwrap_or(b"valkyrie-rs");
+        sp -= argv0.len() as u64 + 1;
         let argv0_ptr = sp;
         vk.uc.mem_write(sp, argv0)?;
+        vk.uc.mem_write(sp + argv0.len() as u64, &[0])?;
 
         sp &= !0xFu64;
 
-        let frame: &[u64] = &[
-            1,
-            argv0_ptr,
-            0,
-            0,
-            AT_PAGESZ,
-            PAGE_SIZE as u64,
-            AT_RANDOM,
-            at_random_ptr,
-            AT_NULL,
-            0,
-        ];
+        let mut frame: Vec<u64> = vec![1, argv0_ptr, 0, 0];
+        append_auxv64(vk, &mut frame, argv0_ptr, at_random_ptr);
 
         sp -= (frame.len() as u64) * 8;
         let mut p = sp;
-        for &w in frame {
+        for &w in &frame {
             vk.uc.mem_write(p, &w.to_le_bytes())?;
             p += 8;
         }
@@ -136,29 +143,24 @@ impl OsLinux {
         let at_random_ptr = sp;
         vk.uc.mem_write(sp, &random_bytes)?;
 
-        let argv0 = b"valkyrie-rs\0";
-        sp -= argv0.len() as u64;
+        let argv0 = vk
+            .elf_auxv
+            .as_ref()
+            .map(|info| info.execfn.as_bytes())
+            .unwrap_or(b"valkyrie-rs");
+        sp -= argv0.len() as u64 + 1;
         let argv0_ptr = sp;
         vk.uc.mem_write(sp, argv0)?;
+        vk.uc.mem_write(sp + argv0.len() as u64, &[0])?;
 
         sp &= !0xFu64;
 
-        let frame: &[u32] = &[
-            1,
-            argv0_ptr as u32,
-            0,
-            0,
-            AT_PAGESZ as u32,
-            PAGE_SIZE,
-            AT_RANDOM as u32,
-            at_random_ptr as u32,
-            AT_NULL as u32,
-            0,
-        ];
+        let mut frame: Vec<u32> = vec![1, argv0_ptr as u32, 0, 0];
+        append_auxv32(vk, &mut frame, argv0_ptr as u32, at_random_ptr as u32);
 
         sp -= (frame.len() as u64) * 4;
         let mut p = sp;
-        for &w in frame {
+        for &w in &frame {
             vk.uc.mem_write(p, &w.to_le_bytes())?;
             p += 4;
         }
@@ -273,6 +275,86 @@ fn gdt_desc(base: u32, limit: u32, access: u8, flags: u8) -> [u8; 8] {
 
 fn selector(idx: u16, rpl: u16) -> u16 {
     (idx << 3) | (rpl & 0x3)
+}
+
+fn append_auxv64(vk: &Valkyrie, frame: &mut Vec<u64>, execfn_ptr: u64, at_random_ptr: u64) {
+    if let Some(info) = &vk.elf_auxv {
+        frame.extend_from_slice(&[
+            AT_PHDR,
+            info.phdr,
+            AT_PHENT,
+            info.phent,
+            AT_PHNUM,
+            info.phnum,
+            AT_BASE,
+            info.base,
+            AT_ENTRY,
+            info.entry,
+            AT_UID,
+            vk.linux_creds.uid as u64,
+            AT_EUID,
+            vk.linux_creds.euid as u64,
+            AT_GID,
+            vk.linux_creds.gid as u64,
+            AT_EGID,
+            vk.linux_creds.egid as u64,
+            AT_CLKTCK,
+            100,
+            AT_SECURE,
+            0,
+            AT_EXECFN,
+            execfn_ptr,
+        ]);
+    }
+
+    frame.extend_from_slice(&[
+        AT_PAGESZ,
+        PAGE_SIZE as u64,
+        AT_RANDOM,
+        at_random_ptr,
+        AT_NULL,
+        0,
+    ]);
+}
+
+fn append_auxv32(vk: &Valkyrie, frame: &mut Vec<u32>, execfn_ptr: u32, at_random_ptr: u32) {
+    if let Some(info) = &vk.elf_auxv {
+        frame.extend_from_slice(&[
+            AT_PHDR as u32,
+            info.phdr as u32,
+            AT_PHENT as u32,
+            info.phent as u32,
+            AT_PHNUM as u32,
+            info.phnum as u32,
+            AT_BASE as u32,
+            info.base as u32,
+            AT_ENTRY as u32,
+            info.entry as u32,
+            AT_UID as u32,
+            vk.linux_creds.uid,
+            AT_EUID as u32,
+            vk.linux_creds.euid,
+            AT_GID as u32,
+            vk.linux_creds.gid,
+            AT_EGID as u32,
+            vk.linux_creds.egid,
+            AT_CLKTCK as u32,
+            100,
+            AT_SECURE as u32,
+            0,
+            AT_EXECFN as u32,
+            execfn_ptr,
+        ]);
+    }
+
+    frame.extend_from_slice(&[
+        AT_PAGESZ as u32,
+        PAGE_SIZE,
+        AT_RANDOM as u32,
+        at_random_ptr,
+        AT_NULL as u32,
+        0,
+    ]);
 }
 
 pub(crate) fn x86_gdt_addr(vk: &Valkyrie) -> u64 {

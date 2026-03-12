@@ -6,9 +6,10 @@ use valkyrie_rs::{VMemory, Valkyrie, ValkyrieConfig};
 
 #[test]
 fn basic_io_x86_64_feed_elf_static() {
-    let rootfs_path = Path::new("/");
+    let rootfs_path = crate::linux_rootfs(Arch::X86_64);
 
-    crate::rm_file_if_exists!("/tmp/d").expect("failed to remove /tmp/d before test");
+    let output_path = rootfs_path.join("tmp").join("d");
+    crate::rm_file_if_exists!(&output_path).expect("failed to remove rootfs /tmp/d before test");
 
     let io_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -38,7 +39,7 @@ fn basic_io_x86_64_feed_elf_static() {
     );
     VMemory::dump_stacks(&mut vk);
 
-    let p = Path::new("/tmp/d");
+    let p = output_path.as_path();
     assert!(p.exists(), "expected {p:?} to exist after vk.run()");
 
     let content = fs::read(p).expect("failed to read /tmp/d");
@@ -50,9 +51,10 @@ fn basic_io_x86_64_feed_elf_static() {
 
 #[test]
 fn basic_io_x86_feed_elf_static() {
-    let rootfs_path = Path::new("/");
+    let rootfs_path = crate::linux_rootfs(Arch::X86);
 
-    crate::rm_file_if_exists!("/tmp/d").expect("failed to remove /tmp/d before test");
+    let output_path = rootfs_path.join("tmp").join("d");
+    crate::rm_file_if_exists!(&output_path).expect("failed to remove rootfs /tmp/d before test");
 
     let io_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -82,7 +84,7 @@ fn basic_io_x86_feed_elf_static() {
     );
     VMemory::dump_stacks(&mut vk);
 
-    let p = Path::new("/tmp/d");
+    let p = output_path.as_path();
     assert!(p.exists(), "expected {p:?} to exist after vk.run()");
 
     let content = fs::read(p).expect("failed to read /tmp/d");

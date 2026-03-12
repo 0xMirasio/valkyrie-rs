@@ -51,9 +51,12 @@ const SYSCALL_HANDLERS: &[(Arch, SyscallHandler)] = &[
 
 pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("read", sys_read),
+    ("pread64", sys_pread64),
     ("open", sys_open),
     ("write", sys_write),
     ("close", sys_close),
+    ("access", sys_access),
+    ("fstat", sys_fstat),
     ("exit", sys_exit),
     ("openat", sys_openat),
     ("renameat2", sys_renameat2),
