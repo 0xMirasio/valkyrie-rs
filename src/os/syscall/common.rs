@@ -28,7 +28,8 @@ impl LinuxCreds {
     }
 }
 
-pub fn sys_exit(vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {
+pub fn sys_exit(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    vk.exit_status = Some(sctx.arg0());
     Logger::info("sys_exit() called. Terminating emulation");
     vk.vstate = VState::Ended;
     let _ = vk.uc.emu_stop();
@@ -36,7 +37,11 @@ pub fn sys_exit(vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {
 }
 
 // todo : implement sys_exit_group when threading is supported
-pub fn sys_exit_group(_vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {
+pub fn sys_exit_group(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    vk.exit_status = Some(sctx.arg0());
+    Logger::info("sys_exit_group() called. Terminating emulation");
+    vk.vstate = VState::Ended;
+    let _ = vk.uc.emu_stop();
     Ok(0_u64)
 }
 

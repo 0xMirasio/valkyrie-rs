@@ -32,7 +32,8 @@ pub fn sys_brk(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         .mem
         .regions
         .iter()
-        .filter(|region| region.start > vk.mem.heap_addr_start)
+        .filter(|region| region.info != "[heap]")
+        .filter(|region| region.start >= mapped_heap_end)
         .map(|region| region.start)
         .min()
         .unwrap_or(u64::MAX);

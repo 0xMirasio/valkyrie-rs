@@ -1,4 +1,4 @@
-//pub mod fileloader;
+pub mod fileloader;
 pub mod rawloader;
 pub mod syscall;
 
