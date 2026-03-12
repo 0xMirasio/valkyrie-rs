@@ -575,6 +575,92 @@ pub fn sys_readlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
 // TODO : implement virtual proc mapper /sys with rootfs
 
+#[cfg(target_os = "linux")]
+fn stat_at(vk: &Valkyrie, dirfd: c_int, file_name: &str, flags: u32) -> Result<libc::stat> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let ret = if file_name.is_empty() && (flags as i32 & libc::AT_EMPTY_PATH) != 0 {
+        let empty_path = b"\0";
+        Logger::debug(
+            format!("sys_newfstatat(dirfd={dirfd}, path=\"\", flags={flags:#x})"),
+            vk.cfg.verbose,
+        );
+
+        unsafe {
+            libc::fstatat(
+                dirfd,
+                empty_path.as_ptr().cast::<c_char>(),
+                &mut st as *mut libc::stat,
+                flags as c_int,
+            )
+        }
+    } else {
+        let abs_path: PathBuf = match get_path_at(vk, dirfd, file_name) {
+            Some(p) => p,
+            None => {
+                return Err(crate::error::ValkyrieError::Io(
+                    io::Error::from_raw_os_error(libc::EBADF),
+                ));
+            }
+        };
+
+        let c_path = match CString::new(abs_path.to_string_lossy().as_bytes()) {
+            Ok(s) => s,
+            Err(_) => {
+                return Err(crate::error::ValkyrieError::Io(
+                    io::Error::from_raw_os_error(libc::EINVAL),
+                ));
+            }
+        };
+
+        Logger::debug(
+            format!("sys_newfstatat({}, flags={flags:#x})", abs_path.display()),
+            vk.cfg.verbose,
+        );
+
+        unsafe {
+            libc::fstatat(
+                libc::AT_FDCWD,
+                c_path.as_ptr() as *const c_char,
+                &mut st as *mut libc::stat,
+                flags as c_int,
+            )
+        }
+    };
+
+    if ret == -1 {
+        return Err(crate::error::ValkyrieError::Io(
+            std::io::Error::last_os_error(),
+        ));
+    }
+
+    Ok(st)
+}
+
+#[cfg(target_os = "linux")]
+fn pack_linux_x86_stat64_le(st: &libc::stat) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(96);
+    bytes.extend_from_slice(&(st.st_dev as u64).to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&(st.st_ino as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_mode as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_nlink as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_uid as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_gid as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_rdev as u64).to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&(st.st_size as i64).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_blksize as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_blocks as u64).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_atime as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_atime_nsec as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_mtime as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_mtime_nsec as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_ctime as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_ctime_nsec as u32).to_le_bytes());
+    bytes.extend_from_slice(&(st.st_ino as u64).to_le_bytes());
+    bytes
+}
+
 pub fn sys_newfstatat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let dirfd = sctx.arg0() as i64 as i32;
     let pathname_ptr = sctx.arg1();
@@ -591,57 +677,43 @@ pub fn sys_newfstatat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     #[cfg(target_os = "linux")]
     {
-        let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        let ret = if file_name.is_empty() && (flags as i32 & libc::AT_EMPTY_PATH) != 0 {
-            let empty_path = b"\0";
-            Logger::debug(
-                format!("sys_newfstatat(dirfd={dirfd}, path=\"\", flags={flags:#x})"),
-                vk.cfg.verbose,
-            );
-
-            unsafe {
-                libc::fstatat(
-                    dirfd,
-                    empty_path.as_ptr().cast::<c_char>(),
-                    &mut st as *mut libc::stat,
-                    flags as c_int,
-                )
-            }
-        } else {
-            let abs_path: PathBuf = match get_path_at(vk, dirfd, &file_name) {
-                Some(p) => p,
-                None => return Ok(neg_errno(libc::EBADF)),
-            };
-
-            let c_path = match CString::new(abs_path.to_string_lossy().as_bytes()) {
-                Ok(s) => s,
-                Err(_) => return Ok(neg_errno(libc::EINVAL)),
-            };
-
-            Logger::debug(
-                format!("sys_newfstatat({}, flags={flags:#x})", abs_path.display()),
-                vk.cfg.verbose,
-            );
-
-            unsafe {
-                libc::fstatat(
-                    libc::AT_FDCWD,
-                    c_path.as_ptr() as *const c_char,
-                    &mut st as *mut libc::stat,
-                    flags as c_int,
-                )
-            }
+        let st = match stat_at(vk, dirfd, &file_name, flags) {
+            Ok(st) => st,
+            Err(_) => return Ok(last_errno()),
         };
-
-        if ret == -1 {
-            return Ok(last_errno());
-        }
 
         let st_len = mem::size_of::<libc::stat>();
         let st_bytes =
             unsafe { std::slice::from_raw_parts((&st as *const libc::stat).cast::<u8>(), st_len) };
         vk.mem.write(&mut vk.uc, statbuf_ptr, st_bytes)?;
 
+        Ok(0)
+    }
+}
+
+pub fn sys_fstatat64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let dirfd = sctx.arg0() as i64 as i32;
+    let pathname_ptr = sctx.arg1();
+    let statbuf_ptr = sctx.arg2();
+    let flags = sctx.arg3() as u32;
+
+    let file_name = read_guest_cstring(vk, pathname_ptr)?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("fstatat64 not supported on this platform. syscall will return -1;");
+        return Ok(last_errno());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let st = match stat_at(vk, dirfd, &file_name, flags) {
+            Ok(st) => st,
+            Err(_) => return Ok(last_errno()),
+        };
+
+        let st_bytes = pack_linux_x86_stat64_le(&st);
+        vk.mem.write(&mut vk.uc, statbuf_ptr, &st_bytes)?;
         Ok(0)
     }
 }

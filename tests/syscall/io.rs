@@ -5,7 +5,7 @@ use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{VMemory, Valkyrie, ValkyrieConfig};
 
 #[test]
-fn io_multiple_x86_64_oslinux_elfloader_static() {
+fn basic_io_x86_64_feed_elf_static() {
     let rootfs_path = Path::new("/");
 
     crate::rm_file_if_exists!("/tmp/d").expect("failed to remove /tmp/d before test");
@@ -30,6 +30,12 @@ fn io_multiple_x86_64_oslinux_elfloader_static() {
     let mut vk = Valkyrie::new(cfg).unwrap();
 
     vk.run().unwrap();
+    assert_eq!(
+        vk.exit_status,
+        Some(0),
+        "guest exited with unexpected status: {:?}",
+        vk.exit_status
+    );
     VMemory::dump_stacks(&mut vk);
 
     let p = Path::new("/tmp/d");
@@ -42,10 +48,8 @@ fn io_multiple_x86_64_oslinux_elfloader_static() {
     );
 }
 
-// TODO : fix io_multiple_x86_oslinux_elfloader_static
-/*
 #[test]
-fn io_multiple_x86_oslinux_elfloader_static() {
+fn basic_io_x86_feed_elf_static() {
     let rootfs_path = Path::new("/");
 
     crate::rm_file_if_exists!("/tmp/d").expect("failed to remove /tmp/d before test");
@@ -70,6 +74,12 @@ fn io_multiple_x86_oslinux_elfloader_static() {
     let mut vk = Valkyrie::new(cfg).unwrap();
 
     vk.run().unwrap();
+    assert_eq!(
+        vk.exit_status,
+        Some(0),
+        "guest exited with unexpected status: {:?}",
+        vk.exit_status
+    );
     VMemory::dump_stacks(&mut vk);
 
     let p = Path::new("/tmp/d");
@@ -81,4 +91,3 @@ fn io_multiple_x86_oslinux_elfloader_static() {
         "unexpected content in /tmp/d: {content:?}"
     );
 }
-*/

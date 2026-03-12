@@ -43,7 +43,7 @@ fn basic_common_x86_feed_elf_static() {
     )
     .unwrap()
     .verbose(true)
-    .disassemble(true)
+    //.disassemble(true)
     .feed_elf(common_bin_path)
     .unwrap();
 

@@ -40,8 +40,6 @@ fn basic_memory_x64_feed_elf_static() {
     VMemory::dump_stacks(&mut vk);
 }
 
-// TODO : fix basic_memory_x86_feed_elf_static (gdt problems)
-/*
 #[test]
 fn basic_memory_x86_feed_elf_static() {
     let rootfs_path = Path::new("/");
@@ -63,7 +61,18 @@ fn basic_memory_x86_feed_elf_static() {
     .unwrap();
 
     let mut vk = Valkyrie::new(cfg).unwrap();
+    let initial_heap_break = vk.mem.heap_addr_exit;
     vk.run().unwrap();
+    assert_eq!(
+        vk.exit_status,
+        Some(0),
+        "guest exited with unexpected status: {:?}",
+        vk.exit_status
+    );
+    assert!(
+        vk.mem.heap_addr_exit > initial_heap_break,
+        "expected heap break to grow: start={initial_heap_break:#x} end={:#x}",
+        vk.mem.heap_addr_exit
+    );
     VMemory::dump_stacks(&mut vk);
 }
-*/

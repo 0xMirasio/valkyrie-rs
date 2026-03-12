@@ -207,6 +207,19 @@ pub fn sys_mmap(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(map_addr)
 }
 
+pub fn sys_mmap2(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let mut mmap_ctx = SubCtx::new([
+        sctx.arg0(),
+        sctx.arg1(),
+        sctx.arg2(),
+        sctx.arg3(),
+        sctx.arg4(),
+        sctx.arg5().saturating_mul(PAGE_SIZE as u64),
+    ]);
+
+    sys_mmap(vk, &mut mmap_ctx)
+}
+
 pub fn sys_mprotect(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let addr = sctx.arg0();
     let len = sctx.arg1();
