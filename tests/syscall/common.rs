@@ -24,6 +24,12 @@ fn basic_common_x64_feed_elf_static() {
 
     let mut vk = Valkyrie::new(cfg).unwrap();
     vk.run().unwrap();
+    assert_eq!(
+        vk.exit_status,
+        Some(0),
+        "guest exited with unexpected status: {:?}",
+        vk.exit_status
+    );
     VMemory::dump_stacks(&mut vk);
 }
 

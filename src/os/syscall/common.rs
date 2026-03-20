@@ -218,6 +218,55 @@ pub fn sys_lookup_dcookie(_vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64>
     Ok(neg_errno(libc::ENOSYS))
 }
 
+fn rt_sigaction_size(arch: Arch, sigsetsize: usize) -> Option<usize> {
+    if sigsetsize == 0 {
+        return None;
+    }
+
+    match arch {
+        Arch::X86_64 => Some(24 + sigsetsize),
+        Arch::X86 => Some(12 + sigsetsize),
+    }
+}
+
+pub fn sys_rt_sigaction(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let signum = sctx.arg0() as i32;
+    let act_addr = sctx.arg1();
+    let oldact_addr = sctx.arg2();
+    let sigsetsize = sctx.arg3() as usize;
+
+    if signum <= 0 {
+        return Ok(neg_errno(libc::EINVAL));
+    }
+
+    let Some(action_size) = rt_sigaction_size(vk.cfg.arch, sigsetsize) else {
+        return Ok(neg_errno(libc::EINVAL));
+    };
+
+    Logger::debug(
+        format!(
+            "sys_rt_sigaction(signum={signum}, act={act_addr:#x}, oldact={oldact_addr:#x}, sigsetsize={sigsetsize})"
+        ),
+        vk.cfg.verbose,
+    );
+
+    if oldact_addr != 0 {
+        if let Some(oldact) = vk.guest_rt_sigactions.get(&signum) {
+            vk.mem.write(&mut vk.uc, oldact_addr, oldact)?;
+        } else {
+            let empty = vec![0u8; action_size];
+            vk.mem.write(&mut vk.uc, oldact_addr, &empty)?;
+        }
+    }
+
+    if act_addr != 0 {
+        let action = vk.mem.read(&mut vk.uc, act_addr, action_size)?;
+        vk.guest_rt_sigactions.insert(signum, action);
+    }
+
+    Ok(0)
+}
+
 pub fn sys_ugetrlimit(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let resource = sctx.arg0() as libc::__rlimit_resource_t;
     let rlim_addr = sctx.arg1();
@@ -261,6 +310,83 @@ pub fn sys_prlimit64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 
     Ok(0)
+}
+
+pub fn sys_prctl(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let option = sctx.arg0() as i32;
+    let arg2 = sctx.arg1();
+    let arg3 = sctx.arg2();
+    let arg4 = sctx.arg3();
+    let arg5 = sctx.arg4();
+
+    Logger::debug(
+        format!(
+            "sys_prctl(option={option}, arg2={arg2:#x}, arg3={arg3:#x}, arg4={arg4:#x}, arg5={arg5:#x})"
+        ),
+        vk.cfg.verbose,
+    );
+
+    match option {
+        libc::PR_SET_NAME => {
+            if arg2 == 0 {
+                return Ok(neg_errno(libc::EFAULT));
+            }
+
+            let bytes = vk.mem.read(&mut vk.uc, arg2, vk.guest_prctl_name.len())?;
+            vk.guest_prctl_name = [0u8; 16];
+
+            let len = bytes
+                .iter()
+                .position(|byte| *byte == 0)
+                .unwrap_or(bytes.len())
+                .min(vk.guest_prctl_name.len().saturating_sub(1));
+            vk.guest_prctl_name[..len].copy_from_slice(&bytes[..len]);
+            Ok(0)
+        }
+        libc::PR_GET_NAME => {
+            if arg2 == 0 {
+                return Ok(neg_errno(libc::EFAULT));
+            }
+
+            vk.mem.write(&mut vk.uc, arg2, &vk.guest_prctl_name)?;
+            Ok(0)
+        }
+        libc::PR_SET_PDEATHSIG => {
+            vk.guest_pdeathsig = arg2 as i32;
+            Ok(0)
+        }
+        libc::PR_GET_PDEATHSIG => {
+            if arg2 == 0 {
+                return Ok(neg_errno(libc::EFAULT));
+            }
+
+            vk.mem
+                .write(&mut vk.uc, arg2, &vk.guest_pdeathsig.to_le_bytes())?;
+            Ok(0)
+        }
+        libc::PR_SET_DUMPABLE => {
+            vk.guest_dumpable = arg2 as i32;
+            Ok(0)
+        }
+        libc::PR_GET_DUMPABLE => Ok(vk.guest_dumpable as u64),
+        libc::PR_CAPBSET_READ => {
+            #[cfg(target_os = "linux")]
+            {
+                let ret = unsafe { libc::prctl(libc::PR_CAPBSET_READ, arg2, 0, 0, 0) };
+                if ret == -1 {
+                    Ok(last_errno())
+                } else {
+                    Ok(ret as u64)
+                }
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                Ok(0)
+            }
+        }
+        _ => Ok(neg_errno(libc::EINVAL)),
+    }
 }
 
 pub fn sys_getpid(_vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {

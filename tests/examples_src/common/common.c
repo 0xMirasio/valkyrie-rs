@@ -1,9 +1,12 @@
 #define _GNU_SOURCE
 #include <assert.h>
 #include <errno.h>
+#include <linux/capability.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/random.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
@@ -57,6 +60,34 @@ int main(void) {
     if (syscall(SYS_prlimit64, 0, RLIMIT_NOFILE, NULL, &lim) != 0) {
         die("prlimit64");
     }
+
+    if (prctl(PR_SET_NAME, "vk-common", 0, 0, 0) != 0) {
+        die("prctl(PR_SET_NAME)");
+    }
+
+    char proc_name[16] = {0};
+    if (prctl(PR_GET_NAME, proc_name, 0, 0, 0) != 0) {
+        die("prctl(PR_GET_NAME)");
+    }
+    assert(strcmp(proc_name, "vk-common") == 0);
+
+    int cap_rc = prctl(PR_CAPBSET_READ, CAP_CHOWN, 0, 0, 0);
+    assert(cap_rc >= 0);
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGUSR1, &sa, NULL) != 0) {
+        die("sigaction(set)");
+    }
+
+    struct sigaction old_sa;
+    memset(&old_sa, 0, sizeof(old_sa));
+    if (sigaction(SIGUSR1, NULL, &old_sa) != 0) {
+        die("sigaction(get)");
+    }
+    assert(old_sa.sa_handler == SIG_IGN);
 
     assert(uid == euid);
     assert(gid == egid);

@@ -23,6 +23,8 @@ pub use vtype::VState;
 
 use error::ValkyrieError;
 use logger::Logger;
+use std::collections::HashMap;
+use std::path::Path;
 use unicorn_engine::Unicorn;
 use vtype::Arch;
 
@@ -46,6 +48,10 @@ pub struct Valkyrie {
     pub exit_status: Option<u64>,                  // guest exit status
     pub elf_auxv: Option<loader::elf::ElfAuxvInfo>, // ELF loader metadata for Linux startup
     pub linux_creds: LinuxCreds,                   // Linux credentials manager
+    pub guest_rt_sigactions: HashMap<i32, Vec<u8>>,
+    pub guest_prctl_name: [u8; 16],
+    pub guest_pdeathsig: i32,
+    pub guest_dumpable: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +66,7 @@ impl Valkyrie {
         let vcorehook: VCoreHooks<Valkyrie> = VCoreHooks::new();
         let vstruct = VCoreStructs::new(cfg.endianess, cfg.archsize).unwrap();
         let vstate = VState::NotSet;
+        let guest_prctl_name = guest_prctl_name_from_cfg(&cfg);
 
         let (uc_arch, uc_mode) = arch::get_unicorn_arch(cfg.arch);
         let arch_subgroup = arch::VArch::new(cfg.arch);
@@ -87,6 +94,10 @@ impl Valkyrie {
             exit_status: None,
             elf_auxv: None,
             linux_creds: LinuxCreds::from_host(),
+            guest_rt_sigactions: HashMap::new(),
+            guest_prctl_name,
+            guest_pdeathsig: 0,
+            guest_dumpable: 1,
         };
 
         let mut ldr = loader::select_loader(vk.cfg.loader)?;
@@ -374,4 +385,19 @@ impl Valkyrie {
 
         Ok(())
     }
+}
+
+fn guest_prctl_name_from_cfg(cfg: &ValkyrieConfig) -> [u8; 16] {
+    let mut name = [0u8; 16];
+    let source = cfg
+        .elf_file
+        .as_deref()
+        .and_then(|path| Path::new(path).file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| String::from("valkyrie"));
+
+    let bytes = source.as_bytes();
+    let len = bytes.len().min(name.len().saturating_sub(1));
+    name[..len].copy_from_slice(&bytes[..len]);
+    name
 }
