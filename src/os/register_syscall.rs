@@ -99,6 +99,11 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("fcntl", sys_fcntl),
     ("fcntl64", sys_fcntl),
     ("set_thread_area", sys_set_thread_area),
+    ("fstat", sys_fstat),
+    ("ioctl", sys_ioctl),
+    ("getdents64", sys_getdents64),
+    ("statfs", sys_statfs),
+    ("statfs64", sys_statfs64),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {

@@ -31,6 +31,164 @@ unsafe fn open_at(dirfd: c_int, c_path: *const c_char, flags: c_int, mode: u32) 
     unsafe { libc::open(c_path, flags, mode as libc::c_uint) }
 }
 
+#[cfg(target_os = "linux")]
+const IOC_NRBITS: libc::c_ulong = 8;
+#[cfg(target_os = "linux")]
+const IOC_TYPEBITS: libc::c_ulong = 8;
+#[cfg(target_os = "linux")]
+const IOC_SIZEBITS: libc::c_ulong = 14;
+#[cfg(target_os = "linux")]
+const IOC_DIRBITS: libc::c_ulong = 2;
+#[cfg(target_os = "linux")]
+const IOC_TYPESHIFT: libc::c_ulong = IOC_NRBITS;
+#[cfg(target_os = "linux")]
+const IOC_SIZESHIFT: libc::c_ulong = IOC_TYPESHIFT + IOC_TYPEBITS;
+#[cfg(target_os = "linux")]
+const IOC_DIRSHIFT: libc::c_ulong = IOC_SIZESHIFT + IOC_SIZEBITS;
+#[cfg(target_os = "linux")]
+const IOC_SIZEMASK: libc::c_ulong = (1 << IOC_SIZEBITS) - 1;
+#[cfg(target_os = "linux")]
+const IOC_DIRMASK: libc::c_ulong = (1 << IOC_DIRBITS) - 1;
+#[cfg(target_os = "linux")]
+const IOC_WRITE: libc::c_ulong = 1;
+#[cfg(target_os = "linux")]
+const IOC_READ: libc::c_ulong = 2;
+
+#[cfg(target_os = "linux")]
+#[repr(C, packed)]
+struct LinuxX86StatFs64 {
+    f_type: u32,
+    f_bsize: u32,
+    f_blocks: u64,
+    f_bfree: u64,
+    f_bavail: u64,
+    f_files: u64,
+    f_ffree: u64,
+    f_fsid: [u8; 8],
+    f_namelen: u32,
+    f_frsize: u32,
+    f_flags: u32,
+    f_spare: [u32; 4],
+}
+
+#[cfg(target_os = "linux")]
+fn ioctl_request_size(request: libc::c_ulong) -> usize {
+    ((request >> IOC_SIZESHIFT) & IOC_SIZEMASK) as usize
+}
+
+#[cfg(target_os = "linux")]
+fn ioctl_request_dir(request: libc::c_ulong) -> libc::c_ulong {
+    (request >> IOC_DIRSHIFT) & IOC_DIRMASK
+}
+
+#[cfg(target_os = "linux")]
+fn host_fd_for_guest(fd: u64) -> Option<c_int> {
+    if fd <= 2 {
+        return Some(fd as c_int);
+    }
+
+    let table = fd_table().lock().ok()?;
+    table.files.get(&fd).map(|vkf| vkf.file.as_raw_fd())
+}
+
+#[cfg(target_os = "linux")]
+fn fsid_bytes(fsid: &libc::fsid_t) -> [u8; 8] {
+    let raw = unsafe {
+        std::slice::from_raw_parts(
+            (fsid as *const libc::fsid_t).cast::<u8>(),
+            mem::size_of::<libc::fsid_t>(),
+        )
+    };
+    let mut out = [0u8; 8];
+    out.copy_from_slice(raw);
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn pack_linux_x86_statfs_le(st: &libc::statfs64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64);
+    push_u32_le(&mut out, st.f_type as u32);
+    push_u32_le(&mut out, st.f_bsize as u32);
+    push_u32_le(&mut out, st.f_blocks as u32);
+    push_u32_le(&mut out, st.f_bfree as u32);
+    push_u32_le(&mut out, st.f_bavail as u32);
+    push_u32_le(&mut out, st.f_files as u32);
+    push_u32_le(&mut out, st.f_ffree as u32);
+    out.extend_from_slice(&fsid_bytes(&st.f_fsid));
+    push_u32_le(&mut out, st.f_namelen as u32);
+    push_u32_le(&mut out, st.f_frsize as u32);
+    push_u32_le(&mut out, st.f_flags as u32);
+    for spare in [0u32; 4] {
+        push_u32_le(&mut out, spare);
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn pack_linux_x86_statfs64_le(st: &libc::statfs64) -> Vec<u8> {
+    let packed = LinuxX86StatFs64 {
+        f_type: st.f_type as u32,
+        f_bsize: st.f_bsize as u32,
+        f_blocks: st.f_blocks,
+        f_bfree: st.f_bfree,
+        f_bavail: st.f_bavail,
+        f_files: st.f_files,
+        f_ffree: st.f_ffree,
+        f_fsid: fsid_bytes(&st.f_fsid),
+        f_namelen: st.f_namelen as u32,
+        f_frsize: st.f_frsize as u32,
+        f_flags: st.f_flags as u32,
+        f_spare: [0; 4],
+    };
+
+    unsafe {
+        std::slice::from_raw_parts(
+            (&packed as *const LinuxX86StatFs64).cast::<u8>(),
+            mem::size_of::<LinuxX86StatFs64>(),
+        )
+        .to_vec()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn statfs_for_path(vk: &Valkyrie, path: &str) -> Result<libc::statfs64> {
+    let abs_path = match get_path_at(vk, AT_FDCWD, path) {
+        Some(path) => path,
+        None => {
+            return Err(crate::error::ValkyrieError::Io(
+                io::Error::from_raw_os_error(libc::EBADF),
+            ));
+        }
+    };
+
+    let c_path = match CString::new(abs_path.to_string_lossy().as_bytes()) {
+        Ok(path) => path,
+        Err(_) => {
+            return Err(crate::error::ValkyrieError::Io(
+                io::Error::from_raw_os_error(libc::EINVAL),
+            ));
+        }
+    };
+
+    Logger::debug(
+        format!("sys_statfs(path={})", abs_path.display()),
+        vk.cfg.verbose,
+    );
+
+    let mut st: libc::statfs64 = unsafe { mem::zeroed() };
+    let ret = unsafe { libc::statfs64(c_path.as_ptr(), &mut st as *mut libc::statfs64) };
+    if ret == -1 {
+        return Err(crate::error::ValkyrieError::Io(io::Error::last_os_error()));
+    }
+
+    Ok(st)
+}
+
+fn guest_path_at(vk: &Valkyrie, dirfd: c_int, path: &str) -> Result<PathBuf> {
+    get_path_at(vk, dirfd, path)
+        .ok_or_else(|| crate::error::ValkyrieError::Io(io::Error::from_raw_os_error(libc::EBADF)))
+}
+
 pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let fd = sctx.arg0();
     let buf_addr = sctx.arg1();
@@ -162,7 +320,10 @@ pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let mode = sctx.arg2() as u32;
 
     let path = read_guest_cstring(vk, path_ptr)?;
-    let host_path = resolve_guest_path(vk, &path);
+    let host_path = match guest_path_at(vk, AT_FDCWD, &path) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EBADF)),
+    };
 
     Logger::debug(
         format!("sys_open(path={}, flags={})", host_path.display(), flags),
@@ -219,7 +380,10 @@ pub fn sys_access(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let mode = sctx.arg1() as i32;
 
     let path = read_guest_cstring(vk, path_ptr)?;
-    let host_path = resolve_guest_path(vk, &path);
+    let host_path = match guest_path_at(vk, AT_FDCWD, &path) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EBADF)),
+    };
 
     Logger::debug(
         format!("sys_access(path={}, mode={mode:#x})", host_path.display()),
@@ -272,7 +436,10 @@ pub fn sys_openat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let mode = sctx.arg3() as u32;
 
     let path = read_guest_cstring(vk, path_ptr)?;
-    let host_path = resolve_guest_path(vk, &path);
+    let host_path = match guest_path_at(vk, dirfd, &path) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EBADF)),
+    };
 
     Logger::debug(
         format!("sys_openat(dirfd={}, path={})", dirfd, host_path.display()),
@@ -530,6 +697,113 @@ pub fn sys_fcntl(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(ret as u64)
 }
 
+pub fn sys_ioctl(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as i32;
+    let request = sctx.arg1() as libc::c_ulong;
+    let arg = sctx.arg2();
+
+    if fd < 0 {
+        return Ok(neg_errno(libc::EBADF));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("ioctl not supported on this platform. syscall will return -1;");
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let Some(host_fd) = host_fd_for_guest(fd as u64) else {
+            return Ok(neg_errno(libc::EBADF));
+        };
+
+        Logger::debug(
+            format!("sys_ioctl(fd={fd}, request={request:#x}, arg={arg:#x})"),
+            vk.cfg.verbose,
+        );
+
+        let int_requests = [
+            libc::FIONBIO as libc::c_ulong,
+            libc::FIONREAD as libc::c_ulong,
+            libc::TIOCINQ as libc::c_ulong,
+            libc::TIOCOUTQ as libc::c_ulong,
+        ];
+        if int_requests.contains(&request) {
+            if arg == 0 {
+                return Ok(neg_errno(libc::EFAULT));
+            }
+
+            let mut value = if request == libc::FIONBIO as libc::c_ulong {
+                let bytes = vk.mem.read(&mut vk.uc, arg, mem::size_of::<c_int>())?;
+                c_int::from_le_bytes(bytes.try_into().expect("c_int is 4 bytes"))
+            } else {
+                0
+            };
+
+            let ret = unsafe { libc::ioctl(host_fd, request, &mut value) };
+            if ret == -1 {
+                return Ok(last_errno());
+            }
+
+            vk.mem.write(&mut vk.uc, arg, &value.to_le_bytes())?;
+            return Ok(ret as u64);
+        }
+
+        if request == libc::TIOCGWINSZ as libc::c_ulong {
+            if arg == 0 {
+                return Ok(neg_errno(libc::EFAULT));
+            }
+
+            let mut winsize: libc::winsize = unsafe { mem::zeroed() };
+            let ret = unsafe { libc::ioctl(host_fd, request, &mut winsize) };
+            if ret == -1 {
+                return Ok(last_errno());
+            }
+
+            let winsize_bytes = unsafe {
+                std::slice::from_raw_parts(
+                    (&winsize as *const libc::winsize).cast::<u8>(),
+                    mem::size_of::<libc::winsize>(),
+                )
+            };
+            vk.mem.write(&mut vk.uc, arg, winsize_bytes)?;
+            return Ok(ret as u64);
+        }
+
+        let size = ioctl_request_size(request);
+        if size == 0 {
+            let ret = unsafe { libc::ioctl(host_fd, request, arg as libc::c_ulong) };
+            if ret == -1 {
+                return Ok(last_errno());
+            }
+            return Ok(ret as u64);
+        }
+
+        if arg == 0 {
+            return Ok(neg_errno(libc::EFAULT));
+        }
+
+        let direction = ioctl_request_dir(request);
+        let mut buffer = vec![0u8; size];
+        if (direction & IOC_WRITE) != 0 {
+            buffer = vk.mem.read(&mut vk.uc, arg, size)?;
+        }
+
+        let ret =
+            unsafe { libc::ioctl(host_fd, request, buffer.as_mut_ptr().cast::<libc::c_void>()) };
+        if ret == -1 {
+            return Ok(last_errno());
+        }
+
+        if (direction & IOC_READ) != 0 {
+            vk.mem.write(&mut vk.uc, arg, &buffer)?;
+        }
+
+        Ok(ret as u64)
+    }
+}
+
 pub fn sys_renameat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let flags = 0;
     let mut subctx = SubCtx::new([sctx.arg0(), sctx.arg1(), sctx.arg2(), sctx.arg3(), flags, 0]);
@@ -710,7 +984,10 @@ pub fn sys_readlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         return Ok(count as u64);
     }
 
-    let host_path = resolve_guest_path(vk, &path);
+    let host_path = match guest_path_at(vk, AT_FDCWD, &path) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EBADF)),
+    };
 
     Logger::debug(
         format!("sys_readlink({})", host_path.display()),
@@ -727,6 +1004,134 @@ pub fn sys_readlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let count = bytes.len().min(buf_size);
     vk.mem.write(&mut vk.uc, buf_addr, &bytes[..count])?;
     Ok(count as u64)
+}
+
+pub fn sys_statfs(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let path_ptr = sctx.arg0();
+    let statfs_buf_ptr = sctx.arg1();
+
+    let path = read_guest_cstring(vk, path_ptr)?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("statfs not supported on this platform. syscall will return -1;");
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let st = match statfs_for_path(vk, &path) {
+            Ok(st) => st,
+            Err(_) => return Ok(last_errno()),
+        };
+
+        let bytes = match vk.cfg.arch {
+            crate::vtype::Arch::X86_64 => unsafe {
+                std::slice::from_raw_parts(
+                    (&st as *const libc::statfs64).cast::<u8>(),
+                    mem::size_of::<libc::statfs64>(),
+                )
+                .to_vec()
+            },
+            crate::vtype::Arch::X86 => pack_linux_x86_statfs_le(&st),
+        };
+
+        vk.mem.write(&mut vk.uc, statfs_buf_ptr, &bytes)?;
+        Ok(0)
+    }
+}
+
+pub fn sys_statfs64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let path_ptr = sctx.arg0();
+    let buf_size = sctx.arg1() as usize;
+    let statfs_buf_ptr = sctx.arg2();
+
+    let path = read_guest_cstring(vk, path_ptr)?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("statfs64 not supported on this platform. syscall will return -1;");
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let st = match statfs_for_path(vk, &path) {
+            Ok(st) => st,
+            Err(_) => return Ok(last_errno()),
+        };
+
+        let bytes = match vk.cfg.arch {
+            crate::vtype::Arch::X86_64 => unsafe {
+                std::slice::from_raw_parts(
+                    (&st as *const libc::statfs64).cast::<u8>(),
+                    mem::size_of::<libc::statfs64>(),
+                )
+                .to_vec()
+            },
+            crate::vtype::Arch::X86 => pack_linux_x86_statfs64_le(&st),
+        };
+
+        if buf_size < bytes.len() {
+            return Ok(neg_errno(libc::EINVAL));
+        }
+
+        vk.mem.write(&mut vk.uc, statfs_buf_ptr, &bytes)?;
+        Ok(0)
+    }
+}
+
+pub fn sys_getdents64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as i32;
+    let dirp = sctx.arg1();
+    let count = sctx.arg2() as usize;
+
+    if count == 0 {
+        return Ok(0);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("getdents64 not supported on this platform. syscall will return -1;");
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if fd < 0 {
+            return Ok(neg_errno(libc::EBADF));
+        }
+
+        let Some(host_fd) = host_fd_for_guest(fd as u64) else {
+            return Ok(neg_errno(libc::EBADF));
+        };
+
+        Logger::debug(
+            format!("sys_getdents64(fd={fd}, count={count})"),
+            vk.cfg.verbose,
+        );
+
+        let mut buffer = vec![0u8; count];
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_getdents64 as libc::c_long,
+                host_fd,
+                buffer.as_mut_ptr().cast::<libc::c_void>(),
+                count,
+            )
+        };
+        if ret < 0 {
+            return Ok(last_errno());
+        }
+
+        let bytes_read = ret as usize;
+        if bytes_read == 0 {
+            return Ok(0);
+        }
+
+        vk.mem.write(&mut vk.uc, dirp, &buffer[..bytes_read])?;
+        Ok(bytes_read as u64)
+    }
 }
 
 // TODO : implement virtual proc mapper /sys with rootfs

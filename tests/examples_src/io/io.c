@@ -5,7 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/vfs.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -17,6 +19,40 @@
 static void die(const char *msg) {
     perror(msg);
     exit(1);
+}
+
+struct linux_dirent64 {
+    ino64_t d_ino;
+    off64_t d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[];
+};
+
+static int dir_contains_name(int fd, const char *needle) {
+    char buf[1024];
+
+    for (;;) {
+        long nread = syscall(SYS_getdents64, fd, buf, sizeof(buf));
+        if (nread < 0) {
+            return -1;
+        }
+        if (nread == 0) {
+            return 0;
+        }
+
+        size_t offset = 0;
+        while (offset < (size_t)nread) {
+            struct linux_dirent64 *dent = (struct linux_dirent64 *)(buf + offset);
+            if (dent->d_reclen == 0) {
+                return 0;
+            }
+            if (strcmp(dent->d_name, needle) == 0) {
+                return 1;
+            }
+            offset += dent->d_reclen;
+        }
+    }
 }
 
 int main(void) {
@@ -59,6 +95,12 @@ int main(void) {
         die("openat(/tmp/d)");
     }
 
+    int unread = -1;
+    if (ioctl(fd, FIONREAD, &unread) != 0) {
+        die("ioctl(FIONREAD)");
+    }
+    assert(unread == 5);
+
     char buf[16] = {0};
     ssize_t r = read(fd, buf, sizeof(buf));
     if (r < 0) {
@@ -90,6 +132,28 @@ int main(void) {
         die("newfstatat");
     }
     assert((long long)st.st_size == 5);
+
+    struct statfs sfs;
+    memset(&sfs, 0, sizeof(sfs));
+    if (syscall(SYS_statfs, dst, &sfs) != 0) {
+        die("statfs");
+    }
+    assert((long long)sfs.f_bsize > 0);
+
+    int dirfd = open("/tmp", O_RDONLY | O_DIRECTORY);
+    if (dirfd < 0) {
+        die("open(/tmp)");
+    }
+
+    int found_dst = dir_contains_name(dirfd, "d");
+    if (found_dst < 0) {
+        die("getdents64(/tmp)");
+    }
+    assert(found_dst == 1);
+
+    if (close(dirfd) < 0) {
+        die("close(/tmp)");
+    }
 
     char exe_path[512] = {0};
     ssize_t link_n = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
