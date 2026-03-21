@@ -181,26 +181,3 @@ pub fn install_syscall_hook(vk: &mut Valkyrie) -> Result<()> {
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::syscall_fn_from_name;
-
-    #[test]
-    fn maps_recently_added_io_syscalls() {
-        for name in [
-            "lseek",
-            "getxattr",
-            "lgetxattr",
-            "fgetxattr",
-            "socket",
-            "connect",
-            "sendto",
-        ] {
-            assert!(
-                syscall_fn_from_name(name).is_some(),
-                "missing mapping for {name}"
-            );
-        }
-    }
-}

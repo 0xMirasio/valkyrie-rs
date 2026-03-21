@@ -5,11 +5,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/vfs.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #if !defined(SYS_newfstatat) && defined(SYS_fstatat64)
@@ -18,6 +21,17 @@
 
 static void die(const char *msg) {
     perror(msg);
+    exit(1);
+}
+
+static void expect_errno_in(const char *what, int actual, const int *expected, size_t expected_len) {
+    for (size_t i = 0; i < expected_len; ++i) {
+        if (actual == expected[i]) {
+            return;
+        }
+    }
+
+    fprintf(stderr, "%s: unexpected errno=%d\n", what, actual);
     exit(1);
 }
 
@@ -52,6 +66,111 @@ static int dir_contains_name(int fd, const char *needle) {
             }
             offset += dent->d_reclen;
         }
+    }
+}
+
+static void exercise_lseek_calls(int fd) {
+    if (lseek(fd, 2, SEEK_SET) != 2) {
+        die("lseek(libc)");
+    }
+
+    char single = '\0';
+    if (read(fd, &single, 1) != 1) {
+        die("read(after libc lseek)");
+    }
+    assert(single == 's');
+
+    long pos = syscall(SYS_lseek, fd, 0, SEEK_SET);
+    if (pos != 0) {
+        die("lseek(syscall)");
+    }
+}
+
+static void exercise_xattr_calls(const char *path, int fd) {
+    char value[32];
+    const int missing_xattr_errnos[] = {ENODATA, ENOTSUP, EOPNOTSUPP};
+
+    errno = 0;
+    ssize_t rc = getxattr(path, "user.valkyrie.missing", value, sizeof(value));
+    if (rc != -1) {
+        fprintf(stderr, "getxattr(libc) unexpectedly succeeded\n");
+        exit(1);
+    }
+    expect_errno_in("getxattr(libc)", errno, missing_xattr_errnos, sizeof(missing_xattr_errnos) / sizeof(missing_xattr_errnos[0]));
+
+    errno = 0;
+    rc = syscall(SYS_lgetxattr, path, "user.valkyrie.missing", value, sizeof(value));
+    if (rc != -1) {
+        fprintf(stderr, "lgetxattr(syscall) unexpectedly succeeded\n");
+        exit(1);
+    }
+    expect_errno_in("lgetxattr(syscall)", errno, missing_xattr_errnos, sizeof(missing_xattr_errnos) / sizeof(missing_xattr_errnos[0]));
+
+    errno = 0;
+    rc = fgetxattr(fd, "user.valkyrie.missing", value, sizeof(value));
+    if (rc != -1) {
+        fprintf(stderr, "fgetxattr(libc) unexpectedly succeeded\n");
+        exit(1);
+    }
+    expect_errno_in("fgetxattr(libc)", errno, missing_xattr_errnos, sizeof(missing_xattr_errnos) / sizeof(missing_xattr_errnos[0]));
+}
+
+static void fill_missing_unix_addr(struct sockaddr_un *addr, const char *path) {
+    memset(addr, 0, sizeof(*addr));
+    addr->sun_family = AF_UNIX;
+    if (strlen(path) >= sizeof(addr->sun_path)) {
+        fprintf(stderr, "unix socket path too long\n");
+        exit(1);
+    }
+    strcpy(addr->sun_path, path);
+}
+
+static void exercise_socket_calls(void) {
+    const char *missing_sock = "/tmp/valkyrie_missing.sock";
+    const int socket_errnos[] = {ENOENT, ECONNREFUSED};
+    struct sockaddr_un addr;
+    fill_missing_unix_addr(&addr, missing_sock);
+
+    int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        die("socket(libc)");
+    }
+
+    errno = 0;
+    int rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (rc != -1) {
+        fprintf(stderr, "connect(libc) unexpectedly succeeded\n");
+        exit(1);
+    }
+    expect_errno_in("connect(libc)", errno, socket_errnos, sizeof(socket_errnos) / sizeof(socket_errnos[0]));
+
+    if (close(fd) < 0) {
+        die("close(socket libc)");
+    }
+
+    fd = (int)syscall(SYS_socket, AF_UNIX, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        die("socket(syscall)");
+    }
+
+    errno = 0;
+    ssize_t sent = syscall(
+        SYS_sendto,
+        fd,
+        "vk",
+        2,
+        0,
+        &addr,
+        (socklen_t)sizeof(addr)
+    );
+    if (sent != -1) {
+        fprintf(stderr, "sendto(syscall) unexpectedly succeeded\n");
+        exit(1);
+    }
+    expect_errno_in("sendto(syscall)", errno, socket_errnos, sizeof(socket_errnos) / sizeof(socket_errnos[0]));
+
+    if (close(fd) < 0) {
+        die("close(socket syscall)");
     }
 }
 
@@ -100,6 +219,9 @@ int main(void) {
         die("ioctl(FIONREAD)");
     }
     assert(unread == 5);
+
+    exercise_lseek_calls(fd);
+    exercise_xattr_calls(dst, fd);
 
     char buf[16] = {0};
     ssize_t r = read(fd, buf, sizeof(buf));
@@ -160,6 +282,8 @@ int main(void) {
     if (link_n <= 0) {
         die("readlink(/proc/self/exe)");
     }
+
+    exercise_socket_calls();
 
     puts("test/io-ok\n");
     return 0;
