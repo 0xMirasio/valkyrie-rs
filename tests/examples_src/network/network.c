@@ -1,6 +1,10 @@
 #define _GNU_SOURCE
 #include <assert.h>
+#include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -212,11 +216,91 @@ static void exercise_pselect6_calls(void) {
     }
 }
 
+static void exercise_poll_shutdown_calls(const char *host, const char *port) {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)atoi(port));
+    if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
+        die("inet_pton");
+    }
+
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+    if (fd < 0) {
+        die("socket(tcp poll)");
+    }
+
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0) {
+        die("fcntl(F_GETFL)");
+    }
+    if (fcntl(fd, F_SETFL, flags) != 0) {
+        die("fcntl(F_SETFL)");
+    }
+
+    int rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (rc != 0 && errno != EINPROGRESS) {
+        die("connect(tcp poll)");
+    }
+
+    struct pollfd pfd = {
+        .fd = fd,
+        .events = POLLOUT,
+        .revents = 0,
+    };
+    rc = poll(&pfd, 1, 1000);
+    if (rc != 1) {
+        die("poll(libc)");
+    }
+    assert((pfd.revents & POLLOUT) != 0);
+
+    int socket_error = -1;
+    socklen_t optlen = sizeof(socket_error);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &optlen) != 0) {
+        die("getsockopt(poll connect)");
+    }
+    assert(optlen == sizeof(socket_error));
+    assert(socket_error == 0);
+
+    const char *payload = "hello-from-guest\n";
+    if (write(fd, payload, strlen(payload)) != (ssize_t)strlen(payload)) {
+        die("write(tcp poll)");
+    }
+
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    long raw_rc = syscall(SYS_poll, &pfd, 1, 1000);
+    if (raw_rc != 1) {
+        die("poll(syscall)");
+    }
+    assert((pfd.revents & POLLIN) != 0);
+
+    char buf[16] = {0};
+    ssize_t n = read(fd, buf, sizeof(buf));
+    if (n <= 0) {
+        die("read(tcp poll)");
+    }
+    assert(memmem(buf, (size_t)n, "ack", 3) != NULL);
+
+    raw_rc = syscall(SYS_shutdown, fd, SHUT_RD);
+    if (raw_rc != 0) {
+        die("shutdown(syscall)");
+    }
+
+    if (close(fd) < 0) {
+        die("close(tcp poll)");
+    }
+}
+
 int main(void) {
     exercise_socket_calls();
     exercise_getsockopt_calls();
     exercise_recvfrom_calls();
     exercise_pselect6_calls();
+    if (access("/tmp/valkyrie_network_tcp", F_OK) == 0) {
+        exercise_poll_shutdown_calls("127.0.0.1", "4444");
+    }
 
     puts("test/network-ok\n");
     return 0;

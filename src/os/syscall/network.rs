@@ -1,7 +1,6 @@
 use crate::Valkyrie;
 use crate::common::{last_errno, neg_errno, read_word};
 use crate::error::Result;
-use crate::logger::Logger;
 use crate::os::register_syscall::SubCtx;
 
 use libc::c_int;
@@ -77,15 +76,10 @@ fn read_pselect6_sigmask(vk: &mut Valkyrie, addr: u64) -> Result<Option<libc::si
     Ok(Some(sigmask))
 }
 
-pub fn sys_socket(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+pub fn sys_socket(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let domain = sctx.arg0() as c_int;
     let socket_type = sctx.arg1() as c_int;
     let protocol = sctx.arg2() as c_int;
-
-    Logger::debug_cgrey(
-        format!("sys_socket(domain={domain}, type={socket_type:#x}, protocol={protocol})"),
-        vk.cfg.verbose,
-    );
 
     let fd = unsafe { libc::socket(domain, socket_type, protocol) };
     if fd < 0 {
@@ -99,14 +93,8 @@ pub fn sys_socketcall(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let call = sctx.arg0();
     let args_addr = sctx.arg1();
     let width = (vk.cfg.archsize / 8) as usize;
-    let verbose = vk.cfg.verbose;
     let mut arg =
         |index: u64| -> Result<u64> { read_word(vk, args_addr + index * width as u64, width) };
-
-    Logger::debug_cgrey(
-        format!("sys_socketcall(call={call}, args={args_addr:#x})"),
-        verbose,
-    );
 
     let args = match call {
         1 => [arg(0)?, arg(1)?, arg(2)?, 0, 0, 0],
@@ -140,13 +128,6 @@ pub fn sys_socketpair(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         return Ok(neg_errno(libc::EFAULT));
     }
 
-    Logger::debug_cgrey(
-        format!(
-            "sys_socketpair(domain={domain}, type={socket_type:#x}, protocol={protocol}, sv={sv_addr:#x})"
-        ),
-        vk.cfg.verbose,
-    );
-
     let mut sv = [0i32; 2];
     let rc = unsafe { libc::socketpair(domain, socket_type, protocol, sv.as_mut_ptr()) };
     if rc < 0 {
@@ -170,17 +151,24 @@ pub fn sys_connect(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     let addr = vk.mem.read(&mut vk.uc, addr_ptr, addr_len as usize)?;
 
-    Logger::debug_cgrey(
-        format!("sys_connect(fd={fd}, addr_ptr={addr_ptr:#x}, addr_len={addr_len})"),
-        vk.cfg.verbose,
-    );
-
     let ret = unsafe { libc::connect(fd, addr.as_ptr().cast::<libc::sockaddr>(), addr_len) };
     if ret < 0 {
         return Ok(last_errno());
     }
 
     Ok(ret as u64)
+}
+
+pub fn sys_shutdown(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as c_int;
+    let how = sctx.arg1() as c_int;
+
+    let rc = unsafe { libc::shutdown(fd, how) };
+    if rc < 0 {
+        return Ok(last_errno());
+    }
+
+    Ok(rc as u64)
 }
 
 pub fn sys_getsockopt(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
@@ -193,13 +181,6 @@ pub fn sys_getsockopt(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     if optlen_addr == 0 {
         return Ok(neg_errno(libc::EFAULT));
     }
-
-    Logger::debug_cgrey(
-        format!(
-            "sys_getsockopt(fd={fd}, level={level}, optname={optname}, optval={optval_addr:#x}, optlen={optlen_addr:#x})"
-        ),
-        vk.cfg.verbose,
-    );
 
     let optlen_bytes = vk
         .mem
@@ -254,11 +235,6 @@ pub fn sys_sendto(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Some(vk.mem.read(&mut vk.uc, dest_addr, addr_len as usize)?)
     };
 
-    Logger::debug_cgrey(
-        format!("sys_sendto(fd={fd}, len={len}, flags={flags:#x})"),
-        vk.cfg.verbose,
-    );
-
     let (addr_ptr, addr_len) = match dest.as_ref() {
         Some(addr) => (addr.as_ptr().cast::<libc::sockaddr>(), addr_len),
         None => (ptr::null(), 0),
@@ -290,11 +266,6 @@ pub fn sys_recvfrom(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let addrlen_ptr = sctx.arg5();
 
     let mut buffer = vec![0u8; len];
-
-    Logger::debug_cgrey(
-        format!("sys_recvfrom(fd={fd}, len={len}, flags={flags:#x})"),
-        vk.cfg.verbose,
-    );
 
     #[cfg(not(target_os = "linux"))]
     {
@@ -358,13 +329,6 @@ pub fn sys_pselect6(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     if nfds < 0 {
         return Ok(neg_errno(libc::EINVAL));
     }
-
-    Logger::debug_cgrey(
-        format!(
-            "sys_pselect6(nfds={nfds}, readfds={readfds_addr:#x}, writefds={writefds_addr:#x}, exceptfds={exceptfds_addr:#x}, timeout={timeout_addr:#x}, sigmask={sigmask_addr:#x})"
-        ),
-        vk.cfg.verbose,
-    );
 
     #[cfg(not(target_os = "linux"))]
     {

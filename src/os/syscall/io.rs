@@ -260,6 +260,31 @@ fn write_epoll_events(vk: &mut Valkyrie, addr: u64, events: &[libc::epoll_event]
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn read_pollfds(vk: &mut Valkyrie, addr: u64, nfds: usize) -> Result<Vec<libc::pollfd>> {
+    let bytes = vk
+        .mem
+        .read(&mut vk.uc, addr, nfds * mem::size_of::<libc::pollfd>())?;
+    let mut pollfds = vec![unsafe { mem::zeroed::<libc::pollfd>() }; nfds];
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            pollfds.as_mut_ptr().cast::<u8>(),
+            bytes.len(),
+        );
+    }
+    Ok(pollfds)
+}
+
+#[cfg(target_os = "linux")]
+fn write_pollfds(vk: &mut Valkyrie, addr: u64, pollfds: &[libc::pollfd]) -> Result<()> {
+    let bytes = unsafe {
+        std::slice::from_raw_parts(pollfds.as_ptr().cast::<u8>(), mem::size_of_val(pollfds))
+    };
+    vk.mem.write(&mut vk.uc, addr, bytes)?;
+    Ok(())
+}
+
 fn readlink_target_for_guest(vk: &Valkyrie, path: &str) -> Option<Vec<u8>> {
     if path == "/proc/self/exe" {
         return Some(
@@ -399,15 +424,10 @@ pub fn sys_pread64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(bytes_read as u64)
 }
 
-pub fn sys_lseek(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+pub fn sys_lseek(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let fd = sctx.arg0();
     let offset = sctx.arg1() as i64;
     let whence = sctx.arg2() as i32;
-
-    Logger::debug_cgrey(
-        format!("sys_lseek(fd={fd}, offset={offset}, whence={whence})"),
-        vk.cfg.verbose,
-    );
 
     match seek_fd(fd, offset, whence) {
         Ok(pos) => Ok(pos as u64),
@@ -461,13 +481,6 @@ pub fn sys_llseek(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     if result_addr == 0 {
         return Ok(neg_errno(libc::EFAULT));
     }
-
-    Logger::debug_cgrey(
-        format!(
-            "sys__llseek(fd={fd}, offset_high={offset_high:#x}, offset_low={offset_low:#x}, result={result_addr:#x}, whence={whence})"
-        ),
-        vk.cfg.verbose,
-    );
 
     let offset = ((offset_high << 32) | offset_low) as i64;
     match seek_fd(fd, offset, whence) {
@@ -792,6 +805,41 @@ pub fn sys_close(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 }
 
+pub fn sys_poll(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fds_addr = sctx.arg0();
+    let nfds = sctx.arg1() as libc::nfds_t;
+    let timeout = sctx.arg2() as i32;
+
+    if nfds > 0 && fds_addr == 0 {
+        return Ok(neg_errno(libc::EFAULT));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut pollfds = if nfds == 0 {
+            Vec::new()
+        } else {
+            read_pollfds(vk, fds_addr, nfds as usize)?
+        };
+
+        let rc = unsafe { libc::poll(pollfds.as_mut_ptr(), nfds, timeout) };
+        if rc < 0 {
+            return Ok(last_errno());
+        }
+
+        if nfds > 0 {
+            write_pollfds(vk, fds_addr, &pollfds)?;
+        }
+
+        Ok(rc as u64)
+    }
+}
+
 pub fn sys_dup(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let oldfd = sctx.arg0() as i32;
 
@@ -882,11 +930,6 @@ pub fn sys_ioctl(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         let Some(host_fd) = host_fd_for_guest(fd as u64) else {
             return Ok(neg_errno(libc::EBADF));
         };
-
-        Logger::debug_cgrey(
-            format!("sys_ioctl(fd={fd}, request={request:#x}, arg={arg:#x})"),
-            vk.cfg.verbose,
-        );
 
         let int_requests = [
             libc::FIONBIO as libc::c_ulong,
@@ -1099,13 +1142,8 @@ pub fn sys_fgetxattr(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 }
 
-pub fn sys_epoll_create1(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+pub fn sys_epoll_create1(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let flags = sctx.arg0() as c_int;
-
-    Logger::debug_cgrey(
-        format!("sys_epoll_create1(flags={flags:#x})"),
-        vk.cfg.verbose,
-    );
 
     #[cfg(not(target_os = "linux"))]
     {
@@ -1127,11 +1165,6 @@ pub fn sys_epoll_ctl(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let op = sctx.arg1() as c_int;
     let fd = sctx.arg2() as c_int;
     let event_addr = sctx.arg3();
-
-    Logger::debug_cgrey(
-        format!("sys_epoll_ctl(epfd={epfd}, op={op}, fd={fd}, event={event_addr:#x})"),
-        vk.cfg.verbose,
-    );
 
     #[cfg(not(target_os = "linux"))]
     {
@@ -1168,13 +1201,6 @@ pub fn sys_epoll_wait(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         return Ok(neg_errno(libc::EINVAL));
     }
 
-    Logger::debug_cgrey(
-        format!(
-            "sys_epoll_wait(epfd={epfd}, events={events_addr:#x}, maxevents={maxevents}, timeout={timeout})"
-        ),
-        vk.cfg.verbose,
-    );
-
     #[cfg(not(target_os = "linux"))]
     {
         return Ok(neg_errno(libc::ENOSYS));
@@ -1196,14 +1222,9 @@ pub fn sys_epoll_wait(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 }
 
-pub fn sys_timerfd_create(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+pub fn sys_timerfd_create(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let clockid = sctx.arg0() as c_int;
     let flags = sctx.arg1() as c_int;
-
-    Logger::debug_cgrey(
-        format!("sys_timerfd_create(clockid={clockid}, flags={flags:#x})"),
-        vk.cfg.verbose,
-    );
 
     #[cfg(not(target_os = "linux"))]
     {
@@ -1229,13 +1250,6 @@ pub fn sys_timerfd_settime(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> 
     if new_value_addr == 0 {
         return Ok(neg_errno(libc::EFAULT));
     }
-
-    Logger::debug_cgrey(
-        format!(
-            "sys_timerfd_settime(fd={fd}, flags={flags:#x}, new_value={new_value_addr:#x}, old_value={old_value_addr:#x})"
-        ),
-        vk.cfg.verbose,
-    );
 
     #[cfg(not(target_os = "linux"))]
     {
@@ -1274,16 +1288,6 @@ pub fn sys_futex(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     if uaddr == 0 {
         return Ok(neg_errno(libc::EFAULT));
     }
-
-    Logger::debug_cgrey(
-        format!(
-            "sys_futex(uaddr={uaddr:#x}, op={futex_op:#x}, val={val}, timeout={:#x}, uaddr2={:#x}, val3={:#x})",
-            sctx.arg3(),
-            sctx.arg4(),
-            sctx.arg5(),
-        ),
-        vk.cfg.verbose,
-    );
 
     #[cfg(not(target_os = "linux"))]
     {
@@ -1647,11 +1651,6 @@ pub fn sys_getdents64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         let Some(host_fd) = host_fd_for_guest(fd as u64) else {
             return Ok(neg_errno(libc::EBADF));
         };
-
-        Logger::debug_cgrey(
-            format!("sys_getdents64(fd={fd}, count={count})"),
-            vk.cfg.verbose,
-        );
 
         let mut buffer = vec![0u8; count];
         let ret = unsafe {

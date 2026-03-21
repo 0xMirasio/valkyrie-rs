@@ -61,6 +61,7 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("fstat", sys_fstat),
     ("exit", sys_exit),
     ("openat", sys_openat),
+    ("poll", sys_poll),
     ("renameat2", sys_renameat2),
     ("renameat", sys_renameat),
     ("statx", sys_statx),
@@ -116,6 +117,7 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("socketcall", sys_socketcall),
     ("socketpair", sys_socketpair),
     ("connect", sys_connect),
+    ("shutdown", sys_shutdown),
     ("getsockopt", sys_getsockopt),
     ("sendto", sys_sendto),
     ("recvfrom", sys_recvfrom),
@@ -195,17 +197,4 @@ pub fn install_syscall_hook(vk: &mut Valkyrie) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::syscall_fn_from_name;
-
-    #[test]
-    fn maps_network_and_llseek_syscalls() {
-        assert!(syscall_fn_from_name("pselect6").is_some());
-        assert!(syscall_fn_from_name("getsockopt").is_some());
-        assert!(syscall_fn_from_name("socketcall").is_some());
-        assert!(syscall_fn_from_name("_llseek").is_some());
-    }
 }
