@@ -313,6 +313,47 @@ pub fn sys_pread64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(bytes_read as u64)
 }
 
+pub fn sys_lseek(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0();
+    let offset = sctx.arg1() as i64;
+    let whence = sctx.arg2() as i32;
+
+    Logger::debug(
+        format!("sys_lseek(fd={fd}, offset={offset}, whence={whence})"),
+        vk.cfg.verbose,
+    );
+
+    let result = if fd <= 2 {
+        unsafe { libc::lseek(fd as c_int, offset as libc::off_t, whence) }
+    } else {
+        let mut table = fd_table().lock().unwrap();
+        match table.files.get_mut(&fd) {
+            Some(vkf) => {
+                let pos = match whence {
+                    libc::SEEK_SET => vkf.file.seek(std::io::SeekFrom::Start(offset as u64)),
+                    libc::SEEK_CUR => vkf.file.seek(std::io::SeekFrom::Current(offset)),
+                    libc::SEEK_END => vkf.file.seek(std::io::SeekFrom::End(offset)),
+                    _ => return Ok(neg_errno(libc::EINVAL)),
+                };
+                match pos {
+                    Ok(pos) => pos as i64,
+                    Err(_) => return Ok(last_errno()),
+                }
+            }
+            None => {
+                drop(table);
+                unsafe { libc::lseek(fd as c_int, offset as libc::off_t, whence) }
+            }
+        }
+    };
+
+    if result < 0 {
+        return Ok(last_errno());
+    }
+
+    Ok(result as u64)
+}
+
 pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     // open(const char *pathname, int flags, mode_t mode)
     let path_ptr = sctx.arg0();
@@ -802,6 +843,220 @@ pub fn sys_ioctl(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
         Ok(ret as u64)
     }
+}
+
+fn sys_path_getxattr(vk: &mut Valkyrie, sctx: &mut SubCtx, follow_symlinks: bool) -> Result<u64> {
+    let path_ptr = sctx.arg0();
+    let name_ptr = sctx.arg1();
+    let value_ptr = sctx.arg2();
+    let size = sctx.arg3() as usize;
+
+    let path = read_guest_cstring(vk, path_ptr)?;
+    let name = read_guest_cstring(vk, name_ptr)?;
+    let host_path = match guest_path_at(vk, AT_FDCWD, &path) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EBADF)),
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (host_path, name, value_ptr, size, follow_symlinks);
+        Logger::warning("getxattr not supported on this platform. syscall will return -1;");
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let c_path = match CString::new(host_path.to_string_lossy().as_bytes()) {
+            Ok(path) => path,
+            Err(_) => return Ok(neg_errno(libc::EINVAL)),
+        };
+        let c_name = match CString::new(name.as_bytes()) {
+            Ok(name) => name,
+            Err(_) => return Ok(neg_errno(libc::EINVAL)),
+        };
+
+        let syscall_name = if follow_symlinks {
+            "sys_getxattr"
+        } else {
+            "sys_lgetxattr"
+        };
+        Logger::debug(
+            format!("{syscall_name}(path={}, name={name})", host_path.display()),
+            vk.cfg.verbose,
+        );
+
+        let mut buffer = vec![0u8; size];
+        let ret = unsafe {
+            if follow_symlinks {
+                libc::getxattr(
+                    c_path.as_ptr(),
+                    c_name.as_ptr(),
+                    buffer.as_mut_ptr().cast::<libc::c_void>(),
+                    size,
+                )
+            } else {
+                libc::lgetxattr(
+                    c_path.as_ptr(),
+                    c_name.as_ptr(),
+                    buffer.as_mut_ptr().cast::<libc::c_void>(),
+                    size,
+                )
+            }
+        };
+
+        if ret < 0 {
+            return Ok(last_errno());
+        }
+
+        let ret = ret as usize;
+        if value_ptr != 0 && ret > 0 {
+            vk.mem.write(&mut vk.uc, value_ptr, &buffer[..ret])?;
+        }
+
+        Ok(ret as u64)
+    }
+}
+
+pub fn sys_getxattr(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    sys_path_getxattr(vk, sctx, true)
+}
+
+pub fn sys_lgetxattr(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    sys_path_getxattr(vk, sctx, false)
+}
+
+pub fn sys_fgetxattr(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as c_int;
+    let name_ptr = sctx.arg1();
+    let value_ptr = sctx.arg2();
+    let size = sctx.arg3() as usize;
+
+    let name = read_guest_cstring(vk, name_ptr)?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (fd, name, value_ptr, size);
+        Logger::warning("fgetxattr not supported on this platform. syscall will return -1;");
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let c_name = match CString::new(name.as_bytes()) {
+            Ok(name) => name,
+            Err(_) => return Ok(neg_errno(libc::EINVAL)),
+        };
+
+        Logger::debug(
+            format!("sys_fgetxattr(fd={fd}, name={name})"),
+            vk.cfg.verbose,
+        );
+
+        let mut buffer = vec![0u8; size];
+        let ret = unsafe {
+            libc::fgetxattr(
+                fd,
+                c_name.as_ptr(),
+                buffer.as_mut_ptr().cast::<libc::c_void>(),
+                size,
+            )
+        };
+        if ret < 0 {
+            return Ok(last_errno());
+        }
+
+        let ret = ret as usize;
+        if value_ptr != 0 && ret > 0 {
+            vk.mem.write(&mut vk.uc, value_ptr, &buffer[..ret])?;
+        }
+
+        Ok(ret as u64)
+    }
+}
+
+pub fn sys_socket(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let domain = sctx.arg0() as c_int;
+    let socket_type = sctx.arg1() as c_int;
+    let protocol = sctx.arg2() as c_int;
+
+    Logger::debug(
+        format!("sys_socket(domain={domain}, type={socket_type:#x}, protocol={protocol})"),
+        vk.cfg.verbose,
+    );
+
+    let fd = unsafe { libc::socket(domain, socket_type, protocol) };
+    if fd < 0 {
+        return Ok(last_errno());
+    }
+
+    Ok(fd as u64)
+}
+
+pub fn sys_connect(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as c_int;
+    let addr_ptr = sctx.arg1();
+    let addr_len = sctx.arg2() as libc::socklen_t;
+
+    if addr_ptr == 0 {
+        return Ok(neg_errno(libc::EFAULT));
+    }
+
+    let addr = vk.mem.read(&mut vk.uc, addr_ptr, addr_len as usize)?;
+
+    Logger::debug(
+        format!("sys_connect(fd={fd}, addr_ptr={addr_ptr:#x}, addr_len={addr_len})"),
+        vk.cfg.verbose,
+    );
+
+    let ret = unsafe { libc::connect(fd, addr.as_ptr().cast::<libc::sockaddr>(), addr_len) };
+    if ret < 0 {
+        return Ok(last_errno());
+    }
+
+    Ok(ret as u64)
+}
+
+pub fn sys_sendto(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as c_int;
+    let buf_addr = sctx.arg1();
+    let len = sctx.arg2() as usize;
+    let flags = sctx.arg3() as c_int;
+    let dest_addr = sctx.arg4();
+    let addr_len = sctx.arg5() as libc::socklen_t;
+
+    let buffer = vk.mem.read(&mut vk.uc, buf_addr, len)?;
+    let dest = if dest_addr == 0 || addr_len == 0 {
+        None
+    } else {
+        Some(vk.mem.read(&mut vk.uc, dest_addr, addr_len as usize)?)
+    };
+
+    Logger::debug(
+        format!("sys_sendto(fd={fd}, len={len}, flags={flags:#x})"),
+        vk.cfg.verbose,
+    );
+
+    let (addr_ptr, addr_len) = match dest.as_ref() {
+        Some(addr) => (addr.as_ptr().cast::<libc::sockaddr>(), addr_len),
+        None => (std::ptr::null(), 0),
+    };
+
+    let ret = unsafe {
+        libc::sendto(
+            fd,
+            buffer.as_ptr().cast::<libc::c_void>(),
+            len,
+            flags,
+            addr_ptr,
+            addr_len,
+        )
+    };
+    if ret < 0 {
+        return Ok(last_errno());
+    }
+
+    Ok(ret as u64)
 }
 
 pub fn sys_renameat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {

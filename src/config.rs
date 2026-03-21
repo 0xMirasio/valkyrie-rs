@@ -14,6 +14,7 @@ pub struct ValkyrieConfig {
     pub os: OsType,               // os
     pub loader: LoaderType,       // loader
     pub rootfs: String,           // rootfspath
+    pub argv: Vec<Vec<u8>>,       // guest argv
     pub verbose: bool,            // verbosity
     pub endianess: Endianess,     // endianess
     pub archsize: u16,            // archsize
@@ -59,6 +60,7 @@ impl ValkyrieConfig {
             os,
             loader: LoaderType::Raw,
             rootfs,
+            argv: Vec::new(),
             verbose: false,
             endianess,
             archsize,
@@ -152,6 +154,16 @@ impl ValkyrieConfig {
     // setter ValkyrieConfig::verbose
     pub fn verbose(mut self, value: bool) -> Self {
         self.verbose = value;
+        self
+    }
+
+    // setter ValkyrieConfig::argv
+    pub fn argv<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<Vec<u8>>,
+    {
+        self.argv = values.into_iter().map(Into::into).collect();
         self
     }
 

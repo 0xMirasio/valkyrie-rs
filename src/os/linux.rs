@@ -49,6 +49,19 @@ impl OsLinux {
             skip_exit_check: false,
         }
     }
+
+    fn guest_argv(vk: &Valkyrie) -> Vec<Vec<u8>> {
+        if !vk.cfg.argv.is_empty() {
+            return vk.cfg.argv.clone();
+        }
+
+        vec![
+            vk.elf_auxv
+                .as_ref()
+                .map(|info| info.execfn.as_bytes().to_vec())
+                .unwrap_or_else(|| b"valkyrie-rs".to_vec()),
+        ]
+    }
 }
 
 impl OsLinux {
@@ -107,20 +120,29 @@ impl OsLinux {
         let at_random_ptr = sp;
         vk.uc.mem_write(sp, &random_bytes)?;
 
-        let argv0 = vk
-            .elf_auxv
-            .as_ref()
-            .map(|info| info.execfn.as_bytes())
-            .unwrap_or(b"valkyrie-rs");
-        sp -= argv0.len() as u64 + 1;
-        let argv0_ptr = sp;
-        vk.uc.mem_write(sp, argv0)?;
-        vk.uc.mem_write(sp + argv0.len() as u64, &[0])?;
+        let guest_argv = Self::guest_argv(vk);
+        let mut argv_ptrs = Vec::with_capacity(guest_argv.len());
+        for arg in guest_argv.iter().rev() {
+            sp -= arg.len() as u64 + 1;
+            vk.uc.mem_write(sp, arg)?;
+            vk.uc.mem_write(sp + arg.len() as u64, &[0])?;
+            argv_ptrs.push(sp);
+        }
+        argv_ptrs.reverse();
+        let execfn_ptr = *argv_ptrs
+            .first()
+            .ok_or(crate::error::ValkyrieError::BadConfig(
+                "guest argv must contain at least one entry",
+            ))?;
 
         sp &= !0xFu64;
 
-        let mut frame: Vec<u64> = vec![1, argv0_ptr, 0, 0];
-        append_auxv64(vk, &mut frame, argv0_ptr, at_random_ptr);
+        let mut frame: Vec<u64> = Vec::with_capacity(argv_ptrs.len() + 4);
+        frame.push(argv_ptrs.len() as u64);
+        frame.extend(argv_ptrs.iter().copied());
+        frame.push(0);
+        frame.push(0);
+        append_auxv64(vk, &mut frame, execfn_ptr, at_random_ptr);
 
         sp -= (frame.len() as u64) * 8;
         let mut p = sp;
@@ -143,20 +165,29 @@ impl OsLinux {
         let at_random_ptr = sp;
         vk.uc.mem_write(sp, &random_bytes)?;
 
-        let argv0 = vk
-            .elf_auxv
-            .as_ref()
-            .map(|info| info.execfn.as_bytes())
-            .unwrap_or(b"valkyrie-rs");
-        sp -= argv0.len() as u64 + 1;
-        let argv0_ptr = sp;
-        vk.uc.mem_write(sp, argv0)?;
-        vk.uc.mem_write(sp + argv0.len() as u64, &[0])?;
+        let guest_argv = Self::guest_argv(vk);
+        let mut argv_ptrs = Vec::with_capacity(guest_argv.len());
+        for arg in guest_argv.iter().rev() {
+            sp -= arg.len() as u64 + 1;
+            vk.uc.mem_write(sp, arg)?;
+            vk.uc.mem_write(sp + arg.len() as u64, &[0])?;
+            argv_ptrs.push(sp as u32);
+        }
+        argv_ptrs.reverse();
+        let execfn_ptr = *argv_ptrs
+            .first()
+            .ok_or(crate::error::ValkyrieError::BadConfig(
+                "guest argv must contain at least one entry",
+            ))?;
 
         sp &= !0xFu64;
 
-        let mut frame: Vec<u32> = vec![1, argv0_ptr as u32, 0, 0];
-        append_auxv32(vk, &mut frame, argv0_ptr as u32, at_random_ptr as u32);
+        let mut frame: Vec<u32> = Vec::with_capacity(argv_ptrs.len() + 4);
+        frame.push(argv_ptrs.len() as u32);
+        frame.extend(argv_ptrs.iter().copied());
+        frame.push(0);
+        frame.push(0);
+        append_auxv32(vk, &mut frame, execfn_ptr, at_random_ptr as u32);
 
         sp -= (frame.len() as u64) * 4;
         let mut p = sp;

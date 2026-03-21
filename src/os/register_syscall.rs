@@ -52,6 +52,7 @@ const SYSCALL_HANDLERS: &[(Arch, SyscallHandler)] = &[
 pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("read", sys_read),
     ("pread64", sys_pread64),
+    ("lseek", sys_lseek),
     ("open", sys_open),
     ("write", sys_write),
     ("close", sys_close),
@@ -103,6 +104,12 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("set_thread_area", sys_set_thread_area),
     ("fstat", sys_fstat),
     ("ioctl", sys_ioctl),
+    ("getxattr", sys_getxattr),
+    ("lgetxattr", sys_lgetxattr),
+    ("fgetxattr", sys_fgetxattr),
+    ("socket", sys_socket),
+    ("connect", sys_connect),
+    ("sendto", sys_sendto),
     ("getdents64", sys_getdents64),
     ("statfs", sys_statfs),
     ("statfs64", sys_statfs64),
@@ -173,4 +180,27 @@ pub fn install_syscall_hook(vk: &mut Valkyrie) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::syscall_fn_from_name;
+
+    #[test]
+    fn maps_recently_added_io_syscalls() {
+        for name in [
+            "lseek",
+            "getxattr",
+            "lgetxattr",
+            "fgetxattr",
+            "socket",
+            "connect",
+            "sendto",
+        ] {
+            assert!(
+                syscall_fn_from_name(name).is_some(),
+                "missing mapping for {name}"
+            );
+        }
+    }
 }
