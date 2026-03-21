@@ -33,11 +33,7 @@ pub struct VMemory {
 
 impl VMemory {
     pub fn new(cfg: &ValkyrieConfig) -> Result<Self> {
-        let disassembler = if cfg.disassemble {
-            Some(Self::build_disassembler(cfg.arch, cfg.archsize)?)
-        } else {
-            None
-        };
+        let disassembler = Some(Self::build_disassembler(cfg.arch, cfg.archsize)?);
 
         Ok(Self {
             regions: Vec::new(),

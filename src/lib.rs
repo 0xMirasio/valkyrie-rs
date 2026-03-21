@@ -174,25 +174,7 @@ impl Valkyrie {
         os_runner.run(self)
     }
 
-    pub fn panic_with_unicorn_context(
-        &mut self,
-        err: unicorn_engine::unicorn_const::uc_error,
-    ) -> ! {
-        let pc_reg = self.arch.regs.pc;
-        let sp_reg = self.arch.regs.sp;
-        let color_red = "\u{1b}[1;31m";
-        let color_cyan = "\u{1b}[1;36m";
-        let color_reset = "\u{1b}[0m";
-
-        let pc = self.arch.regs.get_reg(&mut self.uc, pc_reg).unwrap_or(0);
-        let sp = self.arch.regs.get_reg(&mut self.uc, sp_reg).unwrap_or(0);
-        let mut report = String::new();
-
-        let _ = writeln!(
-            report,
-            "{color_red}Valkyrie panic:{color_reset} unicorn error {err:?} at pc={pc:#x} sp={sp:#x}"
-        );
-        let _ = writeln!(report, "{color_cyan}== Registers =={color_reset}");
+    fn append_register_dump(&mut self, report: &mut String) {
         match self.cfg.arch {
             Arch::X86 => {
                 let regs = vec![
@@ -262,11 +244,9 @@ impl Valkyrie {
                 }
             }
         }
+    }
 
-        let _ = writeln!(
-            report,
-            "{color_cyan}== Instructions around PC =={color_reset}"
-        );
+    fn append_instruction_dump(&mut self, report: &mut String, pc: u64) {
         let insn_size = 0x20;
         let (insn_base, insn_size) = if let Some(region) = self.mem.region_for(pc) {
             let base = pc.saturating_sub(0x10).max(region.start);
@@ -276,6 +256,7 @@ impl Valkyrie {
         } else {
             (pc.saturating_sub(0x10), insn_size)
         };
+
         match self.mem.disassemble(&mut self.uc, insn_base, insn_size) {
             Ok(insns) => {
                 for insn in insns {
@@ -286,8 +267,9 @@ impl Valkyrie {
                 let _ = writeln!(report, "disassembly failed: {err}");
             }
         }
+    }
 
-        let _ = writeln!(report, "{color_cyan}== Stack dump =={color_reset}");
+    fn append_stack_dump(&mut self, report: &mut String, sp: u64) {
         let stack_dump_size = 0x40;
         let stack_dump_size = if let Some(region) = self.mem.region_for(sp) {
             let region_end = region.start + region.size;
@@ -296,26 +278,72 @@ impl Valkyrie {
         } else {
             stack_dump_size
         };
+
         if stack_dump_size == 0 {
             let _ = writeln!(report, "stack dump skipped: empty range");
-        } else {
-            match self.mem.read(&mut self.uc, sp, stack_dump_size) {
-                Ok(bytes) => {
-                    let ptr_size = (self.cfg.archsize / 8) as usize;
-                    for (i, chunk) in bytes.chunks(ptr_size).enumerate() {
-                        let addr = sp + (i * ptr_size) as u64;
-                        let mut value = 0u64;
-                        for (shift, b) in chunk.iter().enumerate() {
-                            value |= (*b as u64) << (shift * 8);
-                        }
-                        let _ = writeln!(report, "\t{addr:#x}: {value:#x}");
+            return;
+        }
+
+        match self.mem.read(&mut self.uc, sp, stack_dump_size) {
+            Ok(bytes) => {
+                let ptr_size = (self.cfg.archsize / 8) as usize;
+                for (i, chunk) in bytes.chunks(ptr_size).enumerate() {
+                    let addr = sp + (i * ptr_size) as u64;
+                    let mut value = 0u64;
+                    for (shift, b) in chunk.iter().enumerate() {
+                        value |= (*b as u64) << (shift * 8);
                     }
-                }
-                Err(err) => {
-                    let _ = writeln!(report, "stack read failed: {err}");
+                    let _ = writeln!(report, "\t{addr:#x}: {value:#x}");
                 }
             }
+            Err(err) => {
+                let _ = writeln!(report, "stack read failed: {err}");
+            }
         }
+    }
+
+    pub fn format_runtime_debug_table(&mut self, title: impl std::fmt::Display) -> String {
+        let pc_reg = self.arch.regs.pc;
+        let sp_reg = self.arch.regs.sp;
+        let color_cyan = "\u{1b}[1;36m";
+        let color_reset = "\u{1b}[0m";
+
+        let pc = self.arch.regs.get_reg(&mut self.uc, pc_reg).unwrap_or(0);
+        let sp = self.arch.regs.get_reg(&mut self.uc, sp_reg).unwrap_or(0);
+        let mut report = String::new();
+
+        let _ = writeln!(report, "{title} at pc={pc:#x} sp={sp:#x}");
+        let _ = writeln!(report, "{color_cyan}== Registers =={color_reset}");
+        self.append_register_dump(&mut report);
+
+        let _ = writeln!(
+            report,
+            "{color_cyan}== Instructions around PC =={color_reset}"
+        );
+        self.append_instruction_dump(&mut report, pc);
+
+        let _ = writeln!(report, "{color_cyan}== Stack dump =={color_reset}");
+        self.append_stack_dump(&mut report, sp);
+
+        report
+    }
+
+    pub fn log_runtime_debug_table(&mut self, title: impl std::fmt::Display) {
+        let report = self.format_runtime_debug_table(title);
+        for line in report.lines() {
+            Logger::info(line);
+        }
+    }
+
+    pub fn panic_with_unicorn_context(
+        &mut self,
+        err: unicorn_engine::unicorn_const::uc_error,
+    ) -> ! {
+        let color_red = "\u{1b}[1;31m";
+        let color_reset = "\u{1b}[0m";
+        let report = self.format_runtime_debug_table(format!(
+            "{color_red}Valkyrie panic:{color_reset} unicorn error {err:?}"
+        ));
         panic!("{report}");
     }
 

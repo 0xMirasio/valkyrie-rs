@@ -466,9 +466,18 @@ pub fn sys_tgkill(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
             return Ok(neg_errno(libc::ESRCH));
         }
 
-        // todo : handle sigsegv properly : save for fuzzing mode.
-        if sig == libc::SIGSEGV {
-            Logger::warning("sys_tgkill() received signal SIGSEGV. Terminating emulation");
+        if sig == libc::SIGSEGV || sig == libc::SIGTRAP {
+            let signal_name = match sig {
+                libc::SIGSEGV => "SIGSEGV",
+                libc::SIGTRAP => "SIGTRAP",
+                _ => "UNKNOWN",
+            };
+            Logger::warning(format!(
+                "sys_tgkill() received signal {signal_name}. Terminating emulation"
+            ));
+            vk.log_runtime_debug_table(format!(
+                "Guest signal {signal_name} triggered runtime debug table"
+            ));
             vk.vstate = VState::Ended;
             let _ = vk.uc.emu_stop();
         }
