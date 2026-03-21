@@ -1,5 +1,5 @@
 use crate::Valkyrie;
-use crate::common::{last_errno, neg_errno, read_word};
+use crate::common::{last_errno, neg_errno, read_word, write_word};
 use crate::error::Result;
 use crate::fs::*;
 use crate::logger::Logger;
@@ -13,6 +13,9 @@ use std::mem;
 #[cfg(target_os = "linux")]
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::PathBuf;
+
+#[cfg(target_os = "linux")]
+const FUTEX_CMD_MASK: i32 = !(libc::FUTEX_PRIVATE_FLAG | libc::FUTEX_CLOCK_REALTIME);
 
 #[cfg(target_os = "linux")]
 unsafe fn open_at(dirfd: c_int, c_path: *const c_char, flags: c_int, mode: u32) -> c_int {
@@ -74,6 +77,45 @@ struct LinuxX86StatFs64 {
 #[cfg(target_os = "linux")]
 fn ioctl_request_size(request: libc::c_ulong) -> usize {
     ((request >> IOC_SIZESHIFT) & IOC_SIZEMASK) as usize
+}
+
+#[cfg(target_os = "linux")]
+fn guest_word_width(vk: &Valkyrie) -> usize {
+    (vk.cfg.archsize / 8) as usize
+}
+
+#[cfg(target_os = "linux")]
+fn read_guest_timespec(vk: &mut Valkyrie, addr: u64) -> Result<libc::timespec> {
+    let width = guest_word_width(vk);
+    Ok(libc::timespec {
+        tv_sec: read_word(vk, addr, width)? as libc::time_t,
+        tv_nsec: read_word(vk, addr + width as u64, width)? as libc::c_long,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn write_guest_timespec(vk: &mut Valkyrie, addr: u64, ts: &libc::timespec) -> Result<()> {
+    let width = guest_word_width(vk);
+    write_word(vk, addr, ts.tv_sec as u64, width)?;
+    write_word(vk, addr + width as u64, ts.tv_nsec as u64, width)?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn read_guest_itimerspec(vk: &mut Valkyrie, addr: u64) -> Result<libc::itimerspec> {
+    let width = guest_word_width(vk) as u64;
+    Ok(libc::itimerspec {
+        it_interval: read_guest_timespec(vk, addr)?,
+        it_value: read_guest_timespec(vk, addr + 2 * width)?,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn write_guest_itimerspec(vk: &mut Valkyrie, addr: u64, spec: &libc::itimerspec) -> Result<()> {
+    let width = guest_word_width(vk) as u64;
+    write_guest_timespec(vk, addr, &spec.it_interval)?;
+    write_guest_timespec(vk, addr + 2 * width, &spec.it_value)?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -170,7 +212,7 @@ fn statfs_for_path(vk: &Valkyrie, path: &str) -> Result<libc::statfs64> {
         }
     };
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!("sys_statfs(path={})", abs_path.display()),
         vk.cfg.verbose,
     );
@@ -187,6 +229,50 @@ fn statfs_for_path(vk: &Valkyrie, path: &str) -> Result<libc::statfs64> {
 fn guest_path_at(vk: &Valkyrie, dirfd: c_int, path: &str) -> Result<PathBuf> {
     get_path_at(vk, dirfd, path)
         .ok_or_else(|| crate::error::ValkyrieError::Io(io::Error::from_raw_os_error(libc::EBADF)))
+}
+
+#[cfg(target_os = "linux")]
+fn epoll_event_size() -> usize {
+    mem::size_of::<libc::epoll_event>()
+}
+
+#[cfg(target_os = "linux")]
+fn read_epoll_event(vk: &mut Valkyrie, addr: u64) -> Result<libc::epoll_event> {
+    let bytes = vk.mem.read(&mut vk.uc, addr, epoll_event_size())?;
+    let mut event: libc::epoll_event = unsafe { mem::zeroed() };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            (&mut event as *mut libc::epoll_event).cast::<u8>(),
+            bytes.len(),
+        );
+    }
+    Ok(event)
+}
+
+#[cfg(target_os = "linux")]
+fn write_epoll_events(vk: &mut Valkyrie, addr: u64, events: &[libc::epoll_event]) -> Result<()> {
+    let event_size = epoll_event_size();
+    let bytes = unsafe {
+        std::slice::from_raw_parts(events.as_ptr().cast::<u8>(), events.len() * event_size)
+    };
+    vk.mem.write(&mut vk.uc, addr, bytes)?;
+    Ok(())
+}
+
+fn readlink_target_for_guest(vk: &Valkyrie, path: &str) -> Option<Vec<u8>> {
+    if path == "/proc/self/exe" {
+        return Some(
+            vk.cfg
+                .elf_file
+                .as_deref()
+                .unwrap_or("/proc/self/exe")
+                .as_bytes()
+                .to_vec(),
+        );
+    }
+
+    None
 }
 
 pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
@@ -228,7 +314,7 @@ pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let preview_len = (bytes_read as usize).min(10).min(buffer.len());
     let preview = String::from_utf8_lossy(&buffer[..preview_len]);
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!("sys_read(fd={fd}, count={count}) => {bytes_read} ({preview:?})"),
         vk.cfg.verbose,
     );
@@ -299,7 +385,7 @@ pub fn sys_pread64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let preview_len = bytes_read.min(10).min(buffer.len());
     let preview = String::from_utf8_lossy(&buffer[..preview_len]);
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!(
             "sys_pread64(fd={fd}, count={count}, offset={offset:#x}) => {bytes_read} ({preview:?})"
         ),
@@ -318,40 +404,80 @@ pub fn sys_lseek(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let offset = sctx.arg1() as i64;
     let whence = sctx.arg2() as i32;
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!("sys_lseek(fd={fd}, offset={offset}, whence={whence})"),
         vk.cfg.verbose,
     );
 
-    let result = if fd <= 2 {
-        unsafe { libc::lseek(fd as c_int, offset as libc::off_t, whence) }
-    } else {
-        let mut table = fd_table().lock().unwrap();
-        match table.files.get_mut(&fd) {
-            Some(vkf) => {
-                let pos = match whence {
-                    libc::SEEK_SET => vkf.file.seek(std::io::SeekFrom::Start(offset as u64)),
-                    libc::SEEK_CUR => vkf.file.seek(std::io::SeekFrom::Current(offset)),
-                    libc::SEEK_END => vkf.file.seek(std::io::SeekFrom::End(offset)),
-                    _ => return Ok(neg_errno(libc::EINVAL)),
-                };
-                match pos {
-                    Ok(pos) => pos as i64,
-                    Err(_) => return Ok(last_errno()),
-                }
-            }
-            None => {
-                drop(table);
-                unsafe { libc::lseek(fd as c_int, offset as libc::off_t, whence) }
-            }
-        }
-    };
+    match seek_fd(fd, offset, whence) {
+        Ok(pos) => Ok(pos as u64),
+        Err(errno) => Ok(neg_errno(errno)),
+    }
+}
 
-    if result < 0 {
-        return Ok(last_errno());
+fn seek_fd(fd: u64, offset: i64, whence: i32) -> std::result::Result<i64, i32> {
+    if fd <= 2 {
+        let result = unsafe { libc::lseek(fd as c_int, offset as libc::off_t, whence) };
+        if result < 0 {
+            return Err(std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EIO));
+        }
+        return Ok(result as i64);
     }
 
-    Ok(result as u64)
+    let mut table = fd_table().lock().unwrap();
+    match table.files.get_mut(&fd) {
+        Some(vkf) => {
+            let pos = match whence {
+                libc::SEEK_SET => vkf.file.seek(std::io::SeekFrom::Start(offset as u64)),
+                libc::SEEK_CUR => vkf.file.seek(std::io::SeekFrom::Current(offset)),
+                libc::SEEK_END => vkf.file.seek(std::io::SeekFrom::End(offset)),
+                _ => return Err(libc::EINVAL),
+            };
+            pos.map(|value| value as i64)
+                .map_err(|err| err.raw_os_error().unwrap_or(libc::EIO))
+        }
+        None => {
+            drop(table);
+            let result = unsafe { libc::lseek(fd as c_int, offset as libc::off_t, whence) };
+            if result < 0 {
+                return Err(std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(libc::EIO));
+            }
+            Ok(result as i64)
+        }
+    }
+}
+
+pub fn sys_llseek(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0();
+    let offset_high = sctx.arg1();
+    let offset_low = sctx.arg2();
+    let result_addr = sctx.arg3();
+    let whence = sctx.arg4() as i32;
+
+    if result_addr == 0 {
+        return Ok(neg_errno(libc::EFAULT));
+    }
+
+    Logger::debug_cgrey(
+        format!(
+            "sys__llseek(fd={fd}, offset_high={offset_high:#x}, offset_low={offset_low:#x}, result={result_addr:#x}, whence={whence})"
+        ),
+        vk.cfg.verbose,
+    );
+
+    let offset = ((offset_high << 32) | offset_low) as i64;
+    match seek_fd(fd, offset, whence) {
+        Ok(pos) => {
+            vk.mem
+                .write(&mut vk.uc, result_addr, &(pos as u64).to_le_bytes())?;
+            Ok(0)
+        }
+        Err(errno) => Ok(neg_errno(errno)),
+    }
 }
 
 pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
@@ -366,7 +492,7 @@ pub fn sys_open(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Err(_) => return Ok(neg_errno(libc::EBADF)),
     };
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!("sys_open(path={}, flags={})", host_path.display(), flags),
         vk.cfg.verbose,
     );
@@ -426,7 +552,7 @@ pub fn sys_access(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Err(_) => return Ok(neg_errno(libc::EBADF)),
     };
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!("sys_access(path={}, mode={mode:#x})", host_path.display()),
         vk.cfg.verbose,
     );
@@ -482,7 +608,7 @@ pub fn sys_openat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Err(_) => return Ok(neg_errno(libc::EBADF)),
     };
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!("sys_openat(dirfd={}, path={})", dirfd, host_path.display()),
         vk.cfg.verbose,
     );
@@ -567,7 +693,7 @@ pub fn sys_write(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let preview_len = (bytes_written as usize).min(10).min(buffer.len());
     let preview = String::from_utf8_lossy(&buffer[..preview_len]);
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!("sys_write(fd={fd}, count={count}) => {bytes_written} ({preview:?})"),
         vk.cfg.verbose,
     );
@@ -648,14 +774,12 @@ pub fn sys_writev(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(total)
 }
 
-pub fn sys_close(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+pub fn sys_close(_vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let fd = sctx.arg0();
 
     if fd <= 2 {
         return Ok(0);
     }
-
-    Logger::debug(format!("sys_close(fd={fd})"), vk.cfg.verbose);
 
     let mut table = fd_table().lock().unwrap();
     if table.files.remove(&fd).is_some() {
@@ -759,7 +883,7 @@ pub fn sys_ioctl(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
             return Ok(neg_errno(libc::EBADF));
         };
 
-        Logger::debug(
+        Logger::debug_cgrey(
             format!("sys_ioctl(fd={fd}, request={request:#x}, arg={arg:#x})"),
             vk.cfg.verbose,
         );
@@ -881,7 +1005,7 @@ fn sys_path_getxattr(vk: &mut Valkyrie, sctx: &mut SubCtx, follow_symlinks: bool
         } else {
             "sys_lgetxattr"
         };
-        Logger::debug(
+        Logger::debug_cgrey(
             format!("{syscall_name}(path={}, name={name})", host_path.display()),
             vk.cfg.verbose,
         );
@@ -948,7 +1072,7 @@ pub fn sys_fgetxattr(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
             Err(_) => return Ok(neg_errno(libc::EINVAL)),
         };
 
-        Logger::debug(
+        Logger::debug_cgrey(
             format!("sys_fgetxattr(fd={fd}, name={name})"),
             vk.cfg.verbose,
         );
@@ -975,88 +1099,215 @@ pub fn sys_fgetxattr(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 }
 
-pub fn sys_socket(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
-    let domain = sctx.arg0() as c_int;
-    let socket_type = sctx.arg1() as c_int;
-    let protocol = sctx.arg2() as c_int;
+pub fn sys_epoll_create1(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let flags = sctx.arg0() as c_int;
 
-    Logger::debug(
-        format!("sys_socket(domain={domain}, type={socket_type:#x}, protocol={protocol})"),
+    Logger::debug_cgrey(
+        format!("sys_epoll_create1(flags={flags:#x})"),
         vk.cfg.verbose,
     );
 
-    let fd = unsafe { libc::socket(domain, socket_type, protocol) };
-    if fd < 0 {
-        return Ok(last_errno());
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Ok(neg_errno(libc::ENOSYS));
     }
 
-    Ok(fd as u64)
+    #[cfg(target_os = "linux")]
+    {
+        let fd = unsafe { libc::epoll_create1(flags) };
+        if fd < 0 {
+            return Ok(last_errno());
+        }
+        Ok(fd as u64)
+    }
 }
 
-pub fn sys_connect(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
-    let fd = sctx.arg0() as c_int;
-    let addr_ptr = sctx.arg1();
-    let addr_len = sctx.arg2() as libc::socklen_t;
+pub fn sys_epoll_ctl(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let epfd = sctx.arg0() as c_int;
+    let op = sctx.arg1() as c_int;
+    let fd = sctx.arg2() as c_int;
+    let event_addr = sctx.arg3();
 
-    if addr_ptr == 0 {
+    Logger::debug_cgrey(
+        format!("sys_epoll_ctl(epfd={epfd}, op={op}, fd={fd}, event={event_addr:#x})"),
+        vk.cfg.verbose,
+    );
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut event = if event_addr != 0 {
+            Some(read_epoll_event(vk, event_addr)?)
+        } else {
+            None
+        };
+        let event_ptr = match event.as_mut() {
+            Some(event) => event as *mut libc::epoll_event,
+            None => std::ptr::null_mut(),
+        };
+
+        let rc = unsafe { libc::epoll_ctl(epfd, op, fd, event_ptr) };
+        if rc < 0 {
+            return Ok(last_errno());
+        }
+        Ok(0)
+    }
+}
+
+pub fn sys_epoll_wait(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let epfd = sctx.arg0() as c_int;
+    let events_addr = sctx.arg1();
+    let maxevents = sctx.arg2() as c_int;
+    let timeout = sctx.arg3() as c_int;
+
+    if events_addr == 0 || maxevents <= 0 {
+        return Ok(neg_errno(libc::EINVAL));
+    }
+
+    Logger::debug_cgrey(
+        format!(
+            "sys_epoll_wait(epfd={epfd}, events={events_addr:#x}, maxevents={maxevents}, timeout={timeout})"
+        ),
+        vk.cfg.verbose,
+    );
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut events = vec![unsafe { mem::zeroed::<libc::epoll_event>() }; maxevents as usize];
+        let rc = unsafe { libc::epoll_wait(epfd, events.as_mut_ptr(), maxevents, timeout) };
+        if rc < 0 {
+            return Ok(last_errno());
+        }
+
+        if rc > 0 {
+            write_epoll_events(vk, events_addr, &events[..rc as usize])?;
+        }
+
+        Ok(rc as u64)
+    }
+}
+
+pub fn sys_timerfd_create(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let clockid = sctx.arg0() as c_int;
+    let flags = sctx.arg1() as c_int;
+
+    Logger::debug_cgrey(
+        format!("sys_timerfd_create(clockid={clockid}, flags={flags:#x})"),
+        vk.cfg.verbose,
+    );
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let fd = unsafe { libc::timerfd_create(clockid, flags) };
+        if fd < 0 {
+            return Ok(last_errno());
+        }
+        Ok(fd as u64)
+    }
+}
+
+pub fn sys_timerfd_settime(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as c_int;
+    let flags = sctx.arg1() as c_int;
+    let new_value_addr = sctx.arg2();
+    let old_value_addr = sctx.arg3();
+
+    if new_value_addr == 0 {
         return Ok(neg_errno(libc::EFAULT));
     }
 
-    let addr = vk.mem.read(&mut vk.uc, addr_ptr, addr_len as usize)?;
-
-    Logger::debug(
-        format!("sys_connect(fd={fd}, addr_ptr={addr_ptr:#x}, addr_len={addr_len})"),
+    Logger::debug_cgrey(
+        format!(
+            "sys_timerfd_settime(fd={fd}, flags={flags:#x}, new_value={new_value_addr:#x}, old_value={old_value_addr:#x})"
+        ),
         vk.cfg.verbose,
     );
 
-    let ret = unsafe { libc::connect(fd, addr.as_ptr().cast::<libc::sockaddr>(), addr_len) };
-    if ret < 0 {
-        return Ok(last_errno());
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Ok(neg_errno(libc::ENOSYS));
     }
 
-    Ok(ret as u64)
+    #[cfg(target_os = "linux")]
+    {
+        let new_value = read_guest_itimerspec(vk, new_value_addr)?;
+
+        let mut old_value: libc::itimerspec = unsafe { mem::zeroed() };
+        let old_value_ptr = if old_value_addr != 0 {
+            &mut old_value as *mut libc::itimerspec
+        } else {
+            std::ptr::null_mut()
+        };
+
+        let rc = unsafe { libc::timerfd_settime(fd, flags, &new_value, old_value_ptr) };
+        if rc < 0 {
+            return Ok(last_errno());
+        }
+
+        if old_value_addr != 0 {
+            write_guest_itimerspec(vk, old_value_addr, &old_value)?;
+        }
+
+        Ok(0)
+    }
 }
 
-pub fn sys_sendto(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
-    let fd = sctx.arg0() as c_int;
-    let buf_addr = sctx.arg1();
-    let len = sctx.arg2() as usize;
-    let flags = sctx.arg3() as c_int;
-    let dest_addr = sctx.arg4();
-    let addr_len = sctx.arg5() as libc::socklen_t;
+pub fn sys_futex(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let uaddr = sctx.arg0();
+    let futex_op = sctx.arg1() as i32;
+    let val = sctx.arg2() as u32;
 
-    let buffer = vk.mem.read(&mut vk.uc, buf_addr, len)?;
-    let dest = if dest_addr == 0 || addr_len == 0 {
-        None
-    } else {
-        Some(vk.mem.read(&mut vk.uc, dest_addr, addr_len as usize)?)
-    };
+    if uaddr == 0 {
+        return Ok(neg_errno(libc::EFAULT));
+    }
 
-    Logger::debug(
-        format!("sys_sendto(fd={fd}, len={len}, flags={flags:#x})"),
+    Logger::debug_cgrey(
+        format!(
+            "sys_futex(uaddr={uaddr:#x}, op={futex_op:#x}, val={val}, timeout={:#x}, uaddr2={:#x}, val3={:#x})",
+            sctx.arg3(),
+            sctx.arg4(),
+            sctx.arg5(),
+        ),
         vk.cfg.verbose,
     );
 
-    let (addr_ptr, addr_len) = match dest.as_ref() {
-        Some(addr) => (addr.as_ptr().cast::<libc::sockaddr>(), addr_len),
-        None => (std::ptr::null(), 0),
-    };
-
-    let ret = unsafe {
-        libc::sendto(
-            fd,
-            buffer.as_ptr().cast::<libc::c_void>(),
-            len,
-            flags,
-            addr_ptr,
-            addr_len,
-        )
-    };
-    if ret < 0 {
-        return Ok(last_errno());
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Ok(neg_errno(libc::ENOSYS));
     }
 
-    Ok(ret as u64)
+    #[cfg(target_os = "linux")]
+    {
+        let current = vk.mem.read(&mut vk.uc, uaddr, 4)?;
+        let current = u32::from_le_bytes(current.try_into().expect("futex word is 4 bytes"));
+        let op = futex_op & FUTEX_CMD_MASK;
+
+        match op {
+            libc::FUTEX_WAIT | libc::FUTEX_WAIT_BITSET => {
+                if current != val {
+                    Ok(neg_errno(libc::EAGAIN))
+                } else {
+                    Ok(0)
+                }
+            }
+            libc::FUTEX_WAKE | libc::FUTEX_WAKE_BITSET | libc::FUTEX_REQUEUE => Ok(0),
+            _ => Ok(neg_errno(libc::ENOSYS)),
+        }
+    }
 }
 
 pub fn sys_renameat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
@@ -1093,7 +1344,7 @@ pub fn sys_renameat2(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Err(_) => return Ok(neg_errno(libc::EINVAL)),
     };
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!(
             "sys_renameat2({}, {})",
             old_abs.display(),
@@ -1161,7 +1412,7 @@ pub fn sys_statx(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     {
         if file_name.is_empty() && (flags as i32 & libc::AT_EMPTY_PATH) != 0 {
             let empty_path = b"\0";
-            Logger::debug(
+            Logger::debug_cgrey(
                 format!("sys_statx(dirfd={dfd}, path=\"\", flags={flags:#x})"),
                 vk.cfg.verbose,
             );
@@ -1186,7 +1437,7 @@ pub fn sys_statx(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
                 Err(_) => return Ok(neg_errno(libc::EINVAL)),
             };
 
-            Logger::debug(format!("sys_statx({})", abs_path.display()), vk.cfg.verbose);
+            Logger::debug_cgrey(format!("sys_statx({})", abs_path.display()), vk.cfg.verbose);
             _ret = unsafe {
                 libc::syscall(
                     libc::SYS_statx as libc::c_long,
@@ -1225,16 +1476,9 @@ pub fn sys_readlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     let path = read_guest_cstring(vk, path_ptr)?;
 
-    if path == "/proc/self/exe" {
-        let target = vk
-            .cfg
-            .elf_file
-            .as_deref()
-            .unwrap_or("/proc/self/exe")
-            .as_bytes()
-            .to_vec();
+    if let Some(target) = readlink_target_for_guest(vk, &path) {
         let count = target.len().min(buf_size);
-        Logger::debug("sys_readlink(/proc/self/exe)", vk.cfg.verbose);
+        Logger::debug_cgrey("sys_readlink(/proc/self/exe)", vk.cfg.verbose);
         vk.mem.write(&mut vk.uc, buf_addr, &target[..count])?;
         return Ok(count as u64);
     }
@@ -1244,13 +1488,56 @@ pub fn sys_readlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Err(_) => return Ok(neg_errno(libc::EBADF)),
     };
 
-    Logger::debug(
+    Logger::debug_cgrey(
         format!("sys_readlink({})", host_path.display()),
         vk.cfg.verbose,
     );
 
     let target = match std::fs::read_link(&host_path) {
         Ok(p) => p,
+        Err(_) => return Ok(last_errno()),
+    };
+
+    let target_bytes = target.to_string_lossy();
+    let bytes = target_bytes.as_bytes();
+    let count = bytes.len().min(buf_size);
+    vk.mem.write(&mut vk.uc, buf_addr, &bytes[..count])?;
+    Ok(count as u64)
+}
+
+pub fn sys_readlinkat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let dirfd = sctx.arg0() as i64 as i32;
+    let path_ptr = sctx.arg1();
+    let buf_addr = sctx.arg2();
+    let buf_size = sctx.arg3() as usize;
+
+    if buf_size == 0 {
+        return Ok(0);
+    }
+
+    let path = read_guest_cstring(vk, path_ptr)?;
+    if let Some(target) = readlink_target_for_guest(vk, &path) {
+        let count = target.len().min(buf_size);
+        Logger::debug_cgrey("sys_readlinkat(/proc/self/exe)", vk.cfg.verbose);
+        vk.mem.write(&mut vk.uc, buf_addr, &target[..count])?;
+        return Ok(count as u64);
+    }
+
+    let host_path = match guest_path_at(vk, dirfd, &path) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EBADF)),
+    };
+
+    Logger::debug_cgrey(
+        format!(
+            "sys_readlinkat(dirfd={dirfd}, path={})",
+            host_path.display()
+        ),
+        vk.cfg.verbose,
+    );
+
+    let target = match std::fs::read_link(&host_path) {
+        Ok(path) => path,
         Err(_) => return Ok(last_errno()),
     };
 
@@ -1361,7 +1648,7 @@ pub fn sys_getdents64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
             return Ok(neg_errno(libc::EBADF));
         };
 
-        Logger::debug(
+        Logger::debug_cgrey(
             format!("sys_getdents64(fd={fd}, count={count})"),
             vk.cfg.verbose,
         );
@@ -1396,7 +1683,7 @@ fn stat_at(vk: &Valkyrie, dirfd: c_int, file_name: &str, flags: u32) -> Result<l
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     let ret = if file_name.is_empty() && (flags as i32 & libc::AT_EMPTY_PATH) != 0 {
         let empty_path = b"\0";
-        Logger::debug(
+        Logger::debug_cgrey(
             format!("sys_newfstatat(dirfd={dirfd}, path=\"\", flags={flags:#x})"),
             vk.cfg.verbose,
         );
@@ -1428,7 +1715,7 @@ fn stat_at(vk: &Valkyrie, dirfd: c_int, file_name: &str, flags: u32) -> Result<l
             }
         };
 
-        Logger::debug(
+        Logger::debug_cgrey(
             format!("sys_newfstatat({}, flags={flags:#x})", abs_path.display()),
             vk.cfg.verbose,
         );

@@ -3,7 +3,7 @@ use crate::arch::x86::handle_x86_syscall;
 use crate::arch::x86_64::handle_x86_64_syscall;
 use crate::error::{Result, ValkyrieError};
 use crate::logger::Logger;
-use crate::os::syscall::{common::*, io::*, memory::*, thread::*};
+use crate::os::syscall::{common::*, io::*, memory::*, network::*, thread::*};
 use crate::vtype::*;
 
 type SyscallHandler = fn(&mut Valkyrie, u64, u32) -> Result<()>;
@@ -53,6 +53,7 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("read", sys_read),
     ("pread64", sys_pread64),
     ("lseek", sys_lseek),
+    ("_llseek", sys_llseek),
     ("open", sys_open),
     ("write", sys_write),
     ("close", sys_close),
@@ -91,9 +92,12 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("clock_gettime", sys_clock_gettime),
     ("clock_gettime64", sys_clock_gettime64),
     ("getrandom", sys_getrandom),
+    ("time", sys_time),
     ("readlink", sys_readlink),
+    ("readlinkat", sys_readlinkat),
     ("lookup_dcookie", sys_lookup_dcookie),
     ("rt_sigaction", sys_rt_sigaction),
+    ("rt_sigprocmask", sys_rt_sigprocmask),
     ("newfstatat", sys_newfstatat),
     ("fstatat64", sys_fstatat64),
     ("getpid", sys_getpid),
@@ -107,9 +111,20 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("getxattr", sys_getxattr),
     ("lgetxattr", sys_lgetxattr),
     ("fgetxattr", sys_fgetxattr),
+    ("futex", sys_futex),
     ("socket", sys_socket),
+    ("socketcall", sys_socketcall),
+    ("socketpair", sys_socketpair),
     ("connect", sys_connect),
+    ("getsockopt", sys_getsockopt),
     ("sendto", sys_sendto),
+    ("recvfrom", sys_recvfrom),
+    ("pselect6", sys_pselect6),
+    ("epoll_wait", sys_epoll_wait),
+    ("epoll_ctl", sys_epoll_ctl),
+    ("epoll_create1", sys_epoll_create1),
+    ("timerfd_create", sys_timerfd_create),
+    ("timerfd_settime", sys_timerfd_settime),
     ("getdents64", sys_getdents64),
     ("statfs", sys_statfs),
     ("statfs64", sys_statfs64),
@@ -180,4 +195,17 @@ pub fn install_syscall_hook(vk: &mut Valkyrie) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::syscall_fn_from_name;
+
+    #[test]
+    fn maps_network_and_llseek_syscalls() {
+        assert!(syscall_fn_from_name("pselect6").is_some());
+        assert!(syscall_fn_from_name("getsockopt").is_some());
+        assert!(syscall_fn_from_name("socketcall").is_some());
+        assert!(syscall_fn_from_name("_llseek").is_some());
+    }
 }

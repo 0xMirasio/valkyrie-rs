@@ -757,7 +757,7 @@ pub fn handle_x86_64_syscall(vk: &mut Valkyrie, addr: u64, size: u32) -> Result<
 
     Logger::debug(
         format!(
-            "x86_64 syscall: no={syscall_no} ({name}) [rdi={arg0:#x}, rsi={arg1:#x}, rdx={arg2:#x}]"
+            "x86_64 syscall: no={syscall_no} ({name}) [rdi={arg0:#x}, rsi={arg1:#x}, rdx={arg2:#x}, r10={arg3:#x}, r8={arg4:#x}, r9={arg5:#x}]"
         ),
         vk.cfg.verbose,
     );

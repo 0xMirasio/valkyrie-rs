@@ -1,5 +1,5 @@
 [package]
-name = "run_binary"
+name = "udbserver_x64"
 version = "0.1.0"
 edition = "2024"
 

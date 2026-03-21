@@ -39,7 +39,7 @@ pub fn sys_exit(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 // todo : implement sys_exit_group when threading is supported
 pub fn sys_exit_group(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     vk.exit_status = Some(sctx.arg0());
-    Logger::info("sys_exit_group() called. Terminating emulation");
+    Logger::success("sys_exit_group() called. Terminating emulation");
     vk.vstate = VState::Ended;
     let _ = vk.uc.emu_stop();
     Ok(0_u64)
@@ -214,6 +214,22 @@ pub fn sys_getrandom(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     }
 }
 
+pub fn sys_time(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let time_ptr = sctx.arg0();
+
+    let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(_) => return Ok(neg_errno(libc::EIO)),
+    };
+
+    if time_ptr != 0 {
+        let width = (vk.cfg.archsize / 8) as usize;
+        write_word(vk, time_ptr, now, width)?;
+    }
+
+    Ok(now)
+}
+
 pub fn sys_lookup_dcookie(_vk: &mut Valkyrie, _sctx: &mut SubCtx) -> Result<u64> {
     Ok(neg_errno(libc::ENOSYS))
 }
@@ -227,6 +243,13 @@ fn rt_sigaction_size(arch: Arch, sigsetsize: usize) -> Option<usize> {
         Arch::X86_64 => Some(24 + sigsetsize),
         Arch::X86 => Some(12 + sigsetsize),
     }
+}
+
+fn resize_sigmask(mask: &[u8], size: usize) -> Vec<u8> {
+    let mut out = vec![0u8; size];
+    let copy_len = mask.len().min(size);
+    out[..copy_len].copy_from_slice(&mask[..copy_len]);
+    out
 }
 
 pub fn sys_rt_sigaction(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
@@ -243,13 +266,6 @@ pub fn sys_rt_sigaction(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         return Ok(neg_errno(libc::EINVAL));
     };
 
-    Logger::debug(
-        format!(
-            "sys_rt_sigaction(signum={signum}, act={act_addr:#x}, oldact={oldact_addr:#x}, sigsetsize={sigsetsize})"
-        ),
-        vk.cfg.verbose,
-    );
-
     if oldact_addr != 0 {
         if let Some(oldact) = vk.guest_rt_sigactions.get(&signum) {
             vk.mem.write(&mut vk.uc, oldact_addr, oldact)?;
@@ -264,6 +280,47 @@ pub fn sys_rt_sigaction(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         vk.guest_rt_sigactions.insert(signum, action);
     }
 
+    Ok(0)
+}
+
+pub fn sys_rt_sigprocmask(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let how = sctx.arg0() as i32;
+    let set_addr = sctx.arg1();
+    let oldset_addr = sctx.arg2();
+    let sigsetsize = sctx.arg3() as usize;
+
+    if sigsetsize == 0 {
+        return Ok(neg_errno(libc::EINVAL));
+    }
+
+    let current_mask = resize_sigmask(&vk.guest_rt_sigmask, sigsetsize);
+    if oldset_addr != 0 {
+        vk.mem.write(&mut vk.uc, oldset_addr, &current_mask)?;
+    }
+
+    if set_addr == 0 {
+        return Ok(0);
+    }
+
+    let new_mask = vk.mem.read(&mut vk.uc, set_addr, sigsetsize)?;
+    let mut merged = current_mask;
+
+    match how {
+        libc::SIG_BLOCK => {
+            for (dst, src) in merged.iter_mut().zip(new_mask.iter()) {
+                *dst |= *src;
+            }
+        }
+        libc::SIG_UNBLOCK => {
+            for (dst, src) in merged.iter_mut().zip(new_mask.iter()) {
+                *dst &= !*src;
+            }
+        }
+        libc::SIG_SETMASK => merged = new_mask,
+        _ => return Ok(neg_errno(libc::EINVAL)),
+    }
+
+    vk.guest_rt_sigmask = merged;
     Ok(0)
 }
 
@@ -315,16 +372,9 @@ pub fn sys_prlimit64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 pub fn sys_prctl(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let option = sctx.arg0() as i32;
     let arg2 = sctx.arg1();
-    let arg3 = sctx.arg2();
-    let arg4 = sctx.arg3();
-    let arg5 = sctx.arg4();
-
-    Logger::debug(
-        format!(
-            "sys_prctl(option={option}, arg2={arg2:#x}, arg3={arg3:#x}, arg4={arg4:#x}, arg5={arg5:#x})"
-        ),
-        vk.cfg.verbose,
-    );
+    let _arg3 = sctx.arg2();
+    let _arg4 = sctx.arg3();
+    let _arg5 = sctx.arg4();
 
     match option {
         libc::PR_SET_NAME => {
@@ -418,13 +468,13 @@ pub fn sys_tgkill(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
         // todo : handle sigsegv properly : save for fuzzing mode.
         if sig == libc::SIGSEGV {
-            Logger::info("sys_tgkill() received signal SIGSEGV. Terminating emulation");
+            Logger::warning("sys_tgkill() received signal SIGSEGV. Terminating emulation");
             vk.vstate = VState::Ended;
             let _ = vk.uc.emu_stop();
         }
 
         if sig == libc::SIGKILL || sig == libc::SIGSTOP {
-            Logger::info("sys_tgkill() received signal SIGKILL/SIGSTOP. Terminating emulation");
+            Logger::warning("sys_tgkill() received signal SIGKILL/SIGSTOP. Terminating emulation");
             vk.vstate = VState::Ended;
             let _ = vk.uc.emu_stop();
         }

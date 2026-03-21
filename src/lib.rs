@@ -34,21 +34,21 @@ use crate::vtype::PAGE_SIZE;
 
 pub struct Valkyrie {
     cfg: ValkyrieConfig,
-    pub vstruct: VCoreStructs,                     // VCoreStructs instance
-    pub vcorehook: VCoreHooks<Valkyrie>,           // VCoreHooks instance
-    pub vstate: VState,                            // emulation state
-    pub uc: Unicorn<'static, HookEnv<Valkyrie>>,   // Unicorn engine
-    pub udb_uc: Option<Box<Unicorn<'static, ()>>>, // udbserver unicorn engine
-    pub arch: arch::VArch,                         // arch subgroup
-    pub mem: memory::VMemory,                      // mem subgroup
-    pub os: os::VCoreOs,                           // os subgroup
-    pub exit_trap_addr: Option<u64>,               // exit trap address (for baremetal)
+    pub vstruct: VCoreStructs,                   // VCoreStructs instance
+    pub vcorehook: VCoreHooks<Valkyrie>,         // VCoreHooks instance
+    pub vstate: VState,                          // emulation state
+    pub uc: Unicorn<'static, HookEnv<Valkyrie>>, // Unicorn engine
+    pub arch: arch::VArch,                       // arch subgroup
+    pub mem: memory::VMemory,                    // mem subgroup
+    pub os: os::VCoreOs,                         // os subgroup
+    pub exit_trap_addr: Option<u64>,             // exit trap address (for baremetal)
     pub exit_trap_hook: Option<unicorn_engine::UcHookId>, // exit trap hook id (for baremetal)
-    pub initial_sp: u64,                           // initial stack pointer
-    pub exit_status: Option<u64>,                  // guest exit status
+    pub initial_sp: u64,                         // initial stack pointer
+    pub exit_status: Option<u64>,                // guest exit status
     pub elf_auxv: Option<loader::elf::ElfAuxvInfo>, // ELF loader metadata for Linux startup
-    pub linux_creds: LinuxCreds,                   // Linux credentials manager
+    pub linux_creds: LinuxCreds,                 // Linux credentials manager
     pub guest_rt_sigactions: HashMap<i32, Vec<u8>>,
+    pub guest_rt_sigmask: Vec<u8>,
     pub guest_prctl_name: [u8; 16],
     pub guest_pdeathsig: i32,
     pub guest_dumpable: i32,
@@ -84,7 +84,6 @@ impl Valkyrie {
             vcorehook,
             vstate,
             uc,
-            udb_uc: None,
             arch: arch_subgroup,
             mem: mem_handle,
             os: os_handle,
@@ -95,6 +94,7 @@ impl Valkyrie {
             elf_auxv: None,
             linux_creds: LinuxCreds::from_host(),
             guest_rt_sigactions: HashMap::new(),
+            guest_rt_sigmask: Vec::new(),
             guest_prctl_name,
             guest_pdeathsig: 0,
             guest_dumpable: 1,
@@ -117,14 +117,8 @@ impl Valkyrie {
 
         if vk.cfg.debug {
             Logger::info("Debug mode enabled, launching udbserver");
-            let handle = vk.uc.get_handle();
-            let udb_uc = unsafe { Unicorn::from_handle(handle) }
+            udbserver::udbserver(&mut vk.uc, vk.cfg.debug_port, ldr.load_address())
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
-            vk.udb_uc = Some(Box::new(udb_uc));
-            if let Some(udb_uc) = vk.udb_uc.as_mut() {
-                udbserver::udbserver(udb_uc, vk.cfg.debug_port, ldr.load_address())
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
-            }
         }
 
         Ok(vk)
@@ -334,7 +328,16 @@ impl Valkyrie {
             return Ok(());
         }
 
-        let trap_addr: u64 = self.mem.tls_addr_exit + PAGE_SIZE as u64;
+        let trap_addr = self
+            .mem
+            .regions
+            .iter()
+            .map(|region| region.start.saturating_add(region.size))
+            .max()
+            .map(|end| {
+                crate::common::align_up(end.saturating_add(PAGE_SIZE as u64), PAGE_SIZE as u64)
+            })
+            .unwrap_or(PAGE_SIZE as u64);
         self.mem.map(
             &mut self.uc,
             trap_addr,

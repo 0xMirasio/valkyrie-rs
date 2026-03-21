@@ -4,13 +4,13 @@ use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{VMemory, Valkyrie, ValkyrieConfig};
 
 #[test]
-fn basic_common_x64_feed_elf_static() {
-    let rootfs_path = crate::linux_rootfs(Arch::X86_64);
+fn basic_common_x64_feed_elf_dynamic() {
+    let rootfs_path = crate::linux_rootfs_glibc(Arch::X86_64);
     let common_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("examples_src")
         .join("build")
-        .join("common_linux_64_static");
+        .join("common_linux_64");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,
@@ -34,13 +34,13 @@ fn basic_common_x64_feed_elf_static() {
 }
 
 #[test]
-fn basic_common_x86_feed_elf_static() {
-    let rootfs_path = crate::linux_rootfs(Arch::X86);
+fn basic_common_x86_feed_elf_dynamic() {
+    let rootfs_path = crate::linux_rootfs_glibc(Arch::X86);
     let common_bin_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("examples_src")
         .join("build")
-        .join("common_linux_32_static");
+        .join("common_linux_32");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86,

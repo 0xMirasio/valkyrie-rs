@@ -7,7 +7,8 @@ pub enum LogLevel {
     Success,
     Warning,
     Error,
-    Debug,
+    Debug1,
+    Debug2,
 }
 
 /// Logger minimaliste (ZST)
@@ -18,11 +19,12 @@ impl Logger {
     #[inline(always)]
     fn color(level: LogLevel) -> &'static str {
         match level {
-            LogLevel::Info => "\x1b[37m",    // white
-            LogLevel::Success => "\x1b[32m", // green
-            LogLevel::Warning => "\x1b[33m", // yellow
-            LogLevel::Error => "\x1b[31m",   // red
-            LogLevel::Debug => "\x1b[36m",   // cyan
+            LogLevel::Info => "\x1b[97m",     // white
+            LogLevel::Success => "\x1b[32m",  // green
+            LogLevel::Warning => "\x1b[33m",  // yellow
+            LogLevel::Error => "\x1b[31m",    // red
+            LogLevel::Debug1 => "\x1b[1;40m", // bold grey
+            LogLevel::Debug2 => "\x1b[37;2m", // light grey
         }
     }
 
@@ -33,7 +35,8 @@ impl Logger {
             LogLevel::Success => "SUCCESS",
             LogLevel::Warning => "WARNING",
             LogLevel::Error => "ERROR",
-            LogLevel::Debug => "DEBUG",
+            LogLevel::Debug1 => "DEBUG1",
+            LogLevel::Debug2 => "DEBUG2",
         }
     }
 
@@ -44,11 +47,11 @@ impl Logger {
 
     fn log(level: LogLevel, msg: impl fmt::Display) {
         eprintln!(
-            "{}[{}]{} {}",
+            "{}[{}] {}{}",
             Self::color(level),
             Self::label(level),
-            Self::reset(),
-            msg
+            msg,
+            Self::reset()
         );
 
         if let LogLevel::Error = level {
@@ -74,7 +77,13 @@ impl Logger {
 
     pub fn debug(msg: impl fmt::Display, verbose: bool) {
         if verbose {
-            Self::log(LogLevel::Debug, msg);
+            Self::log(LogLevel::Debug1, msg);
+        }
+    }
+
+    pub fn debug_cgrey(msg: impl fmt::Display, verbose: bool) {
+        if verbose {
+            Self::log(LogLevel::Debug2, msg);
         }
     }
 }

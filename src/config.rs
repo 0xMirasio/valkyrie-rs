@@ -46,7 +46,7 @@ impl ValkyrieConfig {
 
         let (endianess, archsize) = arch::defaults_for_arch(arch);
 
-        Logger::info(format!(
+        Logger::success(format!(
             "guessed arch defaults: arch={arch:?}, archsize={archsize}bit, endianess={endianess:?}"
         ));
 

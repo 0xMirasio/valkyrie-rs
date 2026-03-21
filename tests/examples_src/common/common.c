@@ -20,6 +20,46 @@ static void die(const char *msg) {
     exit(1);
 }
 
+static void exercise_rt_sigprocmask_calls(void) {
+    sigset_t set;
+    if (sigemptyset(&set) != 0) {
+        die("sigemptyset");
+    }
+    if (sigaddset(&set, SIGUSR1) != 0) {
+        die("sigaddset");
+    }
+    if (sigprocmask(SIG_BLOCK, &set, NULL) != 0) {
+        die("sigprocmask(libc)");
+    }
+
+    unsigned long clear_mask = 0;
+    unsigned long old_mask = 0;
+    long rc = syscall(SYS_rt_sigprocmask, SIG_SETMASK, &clear_mask, &old_mask, sizeof(clear_mask));
+    if (rc != 0) {
+        die("rt_sigprocmask(syscall)");
+    }
+    assert((old_mask & (1UL << (SIGUSR1 - 1))) != 0);
+}
+
+static void exercise_time_calls(void) {
+    time_t libc_now = time(NULL);
+    if (libc_now == (time_t)-1) {
+        die("time(libc)");
+    }
+
+    time_t raw_now = 0;
+    long rc = syscall(SYS_time, &raw_now);
+    if (rc < 0) {
+        die("time(syscall)");
+    }
+
+    long long delta = (long long)libc_now - (long long)raw_now;
+    if (delta < 0) {
+        delta = -delta;
+    }
+    assert(delta <= 1);
+}
+
 int main(void) {
     struct utsname uts;
     if (uname(&uts) != 0) {
@@ -45,6 +85,7 @@ int main(void) {
     if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
         die("clock_gettime");
     }
+    exercise_time_calls();
 
     unsigned char random_buf[16];
     ssize_t got = getrandom(random_buf, sizeof(random_buf), 0);
@@ -88,6 +129,7 @@ int main(void) {
         die("sigaction(get)");
     }
     assert(old_sa.sa_handler == SIG_IGN);
+    exercise_rt_sigprocmask_calls();
 
     assert(uid == euid);
     assert(gid == egid);

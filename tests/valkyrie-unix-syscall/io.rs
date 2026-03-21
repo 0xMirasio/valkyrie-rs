@@ -16,8 +16,8 @@ fn reset_io_guest_paths(rootfs_path: &Path) {
 }
 
 #[test]
-fn basic_io_x86_64_feed_elf_static() {
-    let rootfs_path = crate::linux_rootfs(Arch::X86_64);
+fn basic_io_x86_64_feed_elf_dynamic() {
+    let rootfs_path = crate::linux_rootfs_glibc(Arch::X86_64);
     reset_io_guest_paths(&rootfs_path);
     let tmp_dir = rootfs_path.join("tmp");
     let output_path = tmp_dir.join("d");
@@ -26,7 +26,7 @@ fn basic_io_x86_64_feed_elf_static() {
         .join("tests")
         .join("examples_src")
         .join("build")
-        .join("io_linux_64_static");
+        .join("io_linux_64");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,
@@ -61,8 +61,8 @@ fn basic_io_x86_64_feed_elf_static() {
 }
 
 #[test]
-fn basic_io_x86_feed_elf_static() {
-    let rootfs_path = crate::linux_rootfs(Arch::X86);
+fn basic_io_x86_feed_elf_dynamic() {
+    let rootfs_path = crate::linux_rootfs_glibc(Arch::X86);
     reset_io_guest_paths(&rootfs_path);
     let tmp_dir = rootfs_path.join("tmp");
     let output_path = tmp_dir.join("d");
@@ -71,7 +71,7 @@ fn basic_io_x86_feed_elf_static() {
         .join("tests")
         .join("examples_src")
         .join("build")
-        .join("io_linux_32_static");
+        .join("io_linux_32");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86,

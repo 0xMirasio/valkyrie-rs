@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{VMemory, Valkyrie, ValkyrieConfig};
 
@@ -35,17 +33,9 @@ pub const HELLO_WRITE_X86: [u8; 48] = [
     0xCD, 0x80, // int 0x80
 ];
 
-fn linux_rootfs(arch: Arch) -> PathBuf {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rootfs");
-    match arch {
-        Arch::X86 => root.join("x86_linux"),
-        Arch::X86_64 => root.join("x8664_linux"),
-    }
-}
-
 #[test]
 fn io_write_x86_64_oslinux_rawloader() {
-    let rootfs_path = linux_rootfs(Arch::X86_64);
+    let rootfs_path = crate::linux_rootfs(Arch::X86_64);
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,
         OsType::Linux,
@@ -65,7 +55,7 @@ fn io_write_x86_64_oslinux_rawloader() {
 
 #[test]
 fn io_write_x86_oslinux_rawloader() {
-    let rootfs_path = linux_rootfs(Arch::X86);
+    let rootfs_path = crate::linux_rootfs(Arch::X86);
     let cfg = ValkyrieConfig::new(
         Arch::X86,
         OsType::Linux,

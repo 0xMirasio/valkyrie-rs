@@ -6,9 +6,10 @@ use valkyrie_rs::logger::Logger;
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
 
-pub const SAMPLE_X86_64: [u8; 10] = [
+pub const SAMPLE_X86_64: [u8; 11] = [
     0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
     0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
+    0xC3, // ret
 ];
 
 fn main() {
@@ -35,7 +36,7 @@ fn main() {
         .get_reg(&mut vk.uc, VRegister::X86_64(RegX86_64::RSP))
         .unwrap();
 
-    Logger::info(&format!("RSP = {rsp:#x}"));
+    Logger::info(format!("RSP = {rsp:#x}"));
     vk.mem.show_mappings();
 
     vk.run().unwrap();

@@ -2,17 +2,23 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/futex.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/timerfd.h>
 #include <sys/un.h>
 #include <sys/vfs.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <sys/xattr.h>
+#include <time.h>
 #include <unistd.h>
 
 #if !defined(SYS_newfstatat) && defined(SYS_fstatat64)
@@ -115,62 +121,133 @@ static void exercise_xattr_calls(const char *path, int fd) {
     expect_errno_in("fgetxattr(libc)", errno, missing_xattr_errnos, sizeof(missing_xattr_errnos) / sizeof(missing_xattr_errnos[0]));
 }
 
-static void fill_missing_unix_addr(struct sockaddr_un *addr, const char *path) {
-    memset(addr, 0, sizeof(*addr));
-    addr->sun_family = AF_UNIX;
-    if (strlen(path) >= sizeof(addr->sun_path)) {
-        fprintf(stderr, "unix socket path too long\n");
-        exit(1);
+static void exercise_rt_sigprocmask_calls(void) {
+    sigset_t set;
+    if (sigemptyset(&set) != 0) {
+        die("sigemptyset");
     }
-    strcpy(addr->sun_path, path);
+    if (sigaddset(&set, SIGUSR1) != 0) {
+        die("sigaddset");
+    }
+    if (sigprocmask(SIG_BLOCK, &set, NULL) != 0) {
+        die("sigprocmask(libc)");
+    }
+
+    unsigned long clear_mask = 0;
+    unsigned long old_mask = 0;
+    long rc = syscall(SYS_rt_sigprocmask, SIG_SETMASK, &clear_mask, &old_mask, sizeof(clear_mask));
+    if (rc != 0) {
+        die("rt_sigprocmask(syscall)");
+    }
+    assert((old_mask & (1UL << (SIGUSR1 - 1))) != 0);
 }
 
-static void exercise_socket_calls(void) {
-    const char *missing_sock = "/tmp/valkyrie_missing.sock";
-    const int socket_errnos[] = {ENOENT, ECONNREFUSED};
-    struct sockaddr_un addr;
-    fill_missing_unix_addr(&addr, missing_sock);
-
-    int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
-    if (fd < 0) {
-        die("socket(libc)");
+static void exercise_time_calls(void) {
+    time_t libc_now = time(NULL);
+    if (libc_now == (time_t)-1) {
+        die("time(libc)");
     }
+
+    time_t raw_now = 0;
+    long rc = syscall(SYS_time, &raw_now);
+    if (rc < 0) {
+        die("time(syscall)");
+    }
+
+    long long delta = (long long)libc_now - (long long)raw_now;
+    if (delta < 0) {
+        delta = -delta;
+    }
+    assert(delta <= 1);
+}
+
+static void exercise_readlinkat_calls(void) {
+    char exe_path[512] = {0};
+    ssize_t link_n = readlinkat(AT_FDCWD, "/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (link_n <= 0) {
+        die("readlinkat(/proc/self/exe)");
+    }
+}
+
+static void exercise_futex_calls(void) {
+    uint32_t futex_word = 1;
 
     errno = 0;
-    int rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-    if (rc != -1) {
-        fprintf(stderr, "connect(libc) unexpectedly succeeded\n");
-        exit(1);
-    }
-    expect_errno_in("connect(libc)", errno, socket_errnos, sizeof(socket_errnos) / sizeof(socket_errnos[0]));
-
-    if (close(fd) < 0) {
-        die("close(socket libc)");
-    }
-
-    fd = (int)syscall(SYS_socket, AF_UNIX, SOCK_DGRAM, 0);
-    if (fd < 0) {
-        die("socket(syscall)");
-    }
-
-    errno = 0;
-    ssize_t sent = syscall(
-        SYS_sendto,
-        fd,
-        "vk",
-        2,
+    long rc = syscall(
+        SYS_futex,
+        &futex_word,
+        FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
         0,
-        &addr,
-        (socklen_t)sizeof(addr)
+        NULL,
+        NULL,
+        0
     );
-    if (sent != -1) {
-        fprintf(stderr, "sendto(syscall) unexpectedly succeeded\n");
+    if (rc != -1) {
+        fprintf(stderr, "futex WAIT unexpectedly succeeded\n");
         exit(1);
     }
-    expect_errno_in("sendto(syscall)", errno, socket_errnos, sizeof(socket_errnos) / sizeof(socket_errnos[0]));
+    assert(errno == EAGAIN);
 
-    if (close(fd) < 0) {
-        die("close(socket syscall)");
+    rc = syscall(
+        SYS_futex,
+        &futex_word,
+        FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
+        1,
+        NULL,
+        NULL,
+        0
+    );
+    if (rc != 0) {
+        die("futex WAKE");
+    }
+}
+
+static void exercise_epoll_timerfd_calls(void) {
+    int epfd = epoll_create1(EPOLL_CLOEXEC);
+    if (epfd < 0) {
+        die("epoll_create1");
+    }
+
+    int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+    if (tfd < 0) {
+        die("timerfd_create");
+    }
+
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.events = EPOLLIN;
+    ev.data.u64 = 0x1234;
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, tfd, &ev) != 0) {
+        die("epoll_ctl");
+    }
+
+    struct itimerspec spec;
+    memset(&spec, 0, sizeof(spec));
+    spec.it_value.tv_nsec = 1000000;
+    if (timerfd_settime(tfd, 0, &spec, NULL) != 0) {
+        die("timerfd_settime");
+    }
+
+    struct epoll_event out;
+    memset(&out, 0, sizeof(out));
+    int n = epoll_wait(epfd, &out, 1, 200);
+    if (n != 1) {
+        fprintf(stderr, "epoll_wait returned %d\n", n);
+        exit(1);
+    }
+    assert((out.events & EPOLLIN) != 0);
+
+    uint64_t expirations = 0;
+    if (read(tfd, &expirations, sizeof(expirations)) != (ssize_t)sizeof(expirations)) {
+        die("read(timerfd)");
+    }
+    assert(expirations >= 1);
+
+    if (close(tfd) < 0) {
+        die("close(timerfd)");
+    }
+    if (close(epfd) < 0) {
+        die("close(epoll)");
     }
 }
 
@@ -283,7 +360,11 @@ int main(void) {
         die("readlink(/proc/self/exe)");
     }
 
-    exercise_socket_calls();
+    exercise_rt_sigprocmask_calls();
+    exercise_time_calls();
+    exercise_readlinkat_calls();
+    exercise_futex_calls();
+    exercise_epoll_timerfd_calls();
 
     puts("test/io-ok\n");
     return 0;
