@@ -11,6 +11,7 @@ use crate::Valkyrie;
 pub trait Os {
     fn set_loader_info(&mut self, load_address: u64, code_size: u64, skip_exit_check: bool);
     fn skip_exit_trap(&self) -> bool;
+    fn prepare_execution(&self, vk: &mut Valkyrie) -> Result<(u64, u64)>;
     fn run(&self, vk: &mut Valkyrie) -> Result<()>;
 }
 
@@ -39,6 +40,13 @@ impl VCoreOs {
         match self {
             VCoreOs::Blob(os) => os.run(vk),
             VCoreOs::Linux(os) => os.run(vk),
+        }
+    }
+
+    pub fn prepare_execution(&self, vk: &mut Valkyrie) -> Result<(u64, u64)> {
+        match self {
+            VCoreOs::Blob(os) => os.prepare_execution(vk),
+            VCoreOs::Linux(os) => os.prepare_execution(vk),
         }
     }
 }

@@ -1,25 +1,29 @@
+use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process;
-use std::fs::OpenOptions;
-use std::os::fd::AsRawFd;
+use std::time::Duration;
 use std::time::Instant;
 
-use libafl::corpus::{Corpus, InMemoryCorpus, Testcase};
-use libafl::events::NopEventManager;
+use libafl::corpus::{Corpus, InMemoryOnDiskCorpus, Testcase};
+use libafl::events::{ProgressReporter, SimpleEventManager};
 use libafl::executors::{ExitKind, inprocess::InProcessExecutor};
 use libafl::feedbacks::{CrashFeedback, MaxMapFeedback};
 use libafl::fuzzer::{Fuzzer, StdFuzzer};
 use libafl::inputs::BytesInput;
-use libafl::mutators::{HavocScheduledMutator, mutations::BitFlipMutator};
+use libafl::monitors::SimpleMonitor;
+use libafl::mutators::{HavocScheduledMutator, havoc_mutations};
 use libafl::observers::StdMapObserver;
 use libafl::schedulers::QueueScheduler;
 use libafl::stages::StdMutationalStage;
 use libafl::state::{HasCorpus, HasExecutions, HasSolutions, StdState};
 use libafl_bolts::rands::StdRand;
-use libafl_bolts::tuples::tuple_list;
-use valkyrie_rs::fuzzing::{DEFAULT_COVERAGE_MAP_SIZE, emulate_input_with_coverage};
+use valkyrie_rs::fuzzing::{DEFAULT_COVERAGE_MAP_SIZE, ReusableEmulator};
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
+
+const MIN_ITERATIONS: usize = 1_000;
+const RAM_WORKSPACE_NAME: &str = "valkyrie-fuzzing_simple_crash_elf_x64";
 
 fn parse_iterations() -> usize {
     match std::env::args().nth(1) {
@@ -27,7 +31,7 @@ fn parse_iterations() -> usize {
             eprintln!("invalid iteration count {value:?}: {err}");
             process::exit(2);
         }),
-        None => 2_000,
+        None => MIN_ITERATIONS,
     }
 }
 
@@ -41,71 +45,92 @@ fn repo_root() -> PathBuf {
         })
 }
 
-struct StdioSilencer {
-    stdout_fd: i32,
-    stderr_fd: i32,
+fn example_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-impl StdioSilencer {
-    fn new() -> Result<Self, String> {
-        let devnull = OpenOptions::new()
-            .write(true)
-            .open("/dev/null")
-            .map_err(|err| format!("failed to open /dev/null: {err}"))?;
-
-        let stdout_fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
-        if stdout_fd < 0 {
-            return Err(String::from("failed to duplicate stdout"));
-        }
-
-        let stderr_fd = unsafe { libc::dup(libc::STDERR_FILENO) };
-        if stderr_fd < 0 {
-            unsafe {
-                libc::close(stdout_fd);
-            }
-            return Err(String::from("failed to duplicate stderr"));
-        }
-
-        let devnull_fd = devnull.as_raw_fd();
-        if unsafe { libc::dup2(devnull_fd, libc::STDOUT_FILENO) } < 0 {
-            unsafe {
-                libc::close(stdout_fd);
-                libc::close(stderr_fd);
-            }
-            return Err(String::from("failed to redirect stdout"));
-        }
-        if unsafe { libc::dup2(devnull_fd, libc::STDERR_FILENO) } < 0 {
-            unsafe {
-                libc::dup2(stdout_fd, libc::STDOUT_FILENO);
-                libc::close(stdout_fd);
-                libc::close(stderr_fd);
-            }
-            return Err(String::from("failed to redirect stderr"));
-        }
-
-        Ok(Self {
-            stdout_fd,
-            stderr_fd,
-        })
-    }
+fn ram_workspace_root() -> PathBuf {
+    std::env::var_os("VALKYRIE_AFL_RAM_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/dev/shm").join(RAM_WORKSPACE_NAME))
 }
 
-impl Drop for StdioSilencer {
-    fn drop(&mut self) {
-        unsafe {
-            libc::dup2(self.stdout_fd, libc::STDOUT_FILENO);
-            libc::dup2(self.stderr_fd, libc::STDERR_FILENO);
-            libc::close(self.stdout_fd);
-            libc::close(self.stderr_fd);
+fn ensure_output_layout() -> Result<(PathBuf, PathBuf), String> {
+    let ram_root = ram_workspace_root();
+    let afl_out = ram_root.join("afl_out");
+    let afl_crashs = ram_root.join("afl_crashs");
+
+    fs::create_dir_all(&afl_out)
+        .map_err(|err| format!("failed to create {}: {err}", afl_out.display()))?;
+    fs::create_dir_all(&afl_crashs)
+        .map_err(|err| format!("failed to create {}: {err}", afl_crashs.display()))?;
+
+    ensure_local_output_link("afl_out", &afl_out)?;
+    ensure_local_output_link("afl_crashs", &afl_crashs)?;
+
+    Ok((afl_out, afl_crashs))
+}
+
+fn ensure_local_output_link(name: &str, target: &Path) -> Result<(), String> {
+    let local = example_root().join(name);
+
+    if let Ok(meta) = fs::symlink_metadata(&local) {
+        if !meta.file_type().is_symlink() {
+            return Err(format!(
+                "{} already exists and is not a symlink. Remove it or run setup_fuzzer.sh first",
+                local.display()
+            ));
         }
+
+        let current = fs::read_link(&local)
+            .map_err(|err| format!("failed to read symlink {}: {err}", local.display()))?;
+        if current == target {
+            return Ok(());
+        }
+
+        fs::remove_file(&local)
+            .map_err(|err| format!("failed to replace {}: {err}", local.display()))?;
     }
+
+    create_symlink(target, &local)
+}
+
+#[cfg(unix)]
+fn create_symlink(target: &Path, link: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(target, link).map_err(|err| {
+        format!(
+            "failed to create symlink {} -> {}: {err}",
+            link.display(),
+            target.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn create_symlink(target: &Path, link: &Path) -> Result<(), String> {
+    let _ = target;
+    let _ = link;
+    Err(String::from(
+        "this example expects a unix host for /dev/shm-backed output links",
+    ))
 }
 
 fn main() {
-    let iterations = parse_iterations();
+    let requested_iterations = parse_iterations();
+    let iterations = requested_iterations.max(MIN_ITERATIONS);
     let repo_root = repo_root();
     let rootfs_path = repo_root.join("rootfs").join("x8664_linux");
-    let target_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target.bin");
+    let target_path = example_root().join("target.bin");
+    let (afl_out_dir, afl_crashs_dir) = ensure_output_layout().unwrap_or_else(|err| {
+        eprintln!("failed to prepare LibAFL output layout: {err}");
+        process::exit(2);
+    });
+
+    if requested_iterations < MIN_ITERATIONS {
+        eprintln!(
+            "iteration count {requested_iterations} is too low for this example, using {MIN_ITERATIONS}"
+        );
+    }
 
     if !target_path.is_file() {
         eprintln!(
@@ -124,8 +149,20 @@ fn main() {
 
     let mut state = StdState::new(
         StdRand::with_seed(0xC0DEC0DE),
-        InMemoryCorpus::<BytesInput>::new(),
-        InMemoryCorpus::<BytesInput>::new(),
+        InMemoryOnDiskCorpus::<BytesInput>::new(&afl_out_dir).unwrap_or_else(|err| {
+            eprintln!(
+                "failed to create corpus dir {}: {err}",
+                afl_out_dir.display()
+            );
+            process::exit(1);
+        }),
+        InMemoryOnDiskCorpus::<BytesInput>::new(&afl_crashs_dir).unwrap_or_else(|err| {
+            eprintln!(
+                "failed to create crashes dir {}: {err}",
+                afl_crashs_dir.display()
+            );
+            process::exit(1);
+        }),
         &mut feedback,
         &mut objective,
     )
@@ -134,7 +171,7 @@ fn main() {
         process::exit(1);
     });
 
-    for seed in [b"NOPE".as_slice(), b"ABB".as_slice()] {
+    for seed in [b"NOPE".as_slice(), b"A".as_slice(), b"AB".as_slice(), b"ABB".as_slice()] {
         state
             .corpus_mut()
             .add(Testcase::new(BytesInput::new(seed.to_vec())))
@@ -146,24 +183,42 @@ fn main() {
 
     let scheduler = QueueScheduler::new();
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
-    let mut event_manager = NopEventManager::new();
+    let monitor = SimpleMonitor::new(|status| {
+        println!("[monitor] {status}");
+    });
+    let mut event_manager = SimpleEventManager::new(monitor);
+
+    println!("afl_out={}", afl_out_dir.display());
+    println!("afl_crashs={}", afl_crashs_dir.display());
+
+    let cfg = ValkyrieConfig::new(
+        Arch::X86_64,
+        OsType::Linux,
+        rootfs_path.to_string_lossy().to_string(),
+    )
+    .unwrap_or_else(|err| {
+        eprintln!("failed to build Valkyrie config: {err}");
+        process::exit(1);
+    })
+    .feed_elf(&target_path)
+    .unwrap_or_else(|err| {
+        eprintln!(
+            "failed to configure fuzz target {}: {err}",
+            target_path.display()
+        );
+        process::exit(1);
+    });
+    let vk = Valkyrie::new(cfg).unwrap_or_else(|err| {
+        eprintln!("failed to create Valkyrie instance: {err}");
+        process::exit(1);
+    });
+    let mut runner = ReusableEmulator::new(vk, &mut coverage).unwrap_or_else(|err| {
+        eprintln!("failed to create reusable emulator: {err}");
+        process::exit(1);
+    });
 
     let mut harness = |input: &BytesInput| -> ExitKind {
-        let _silencer = StdioSilencer::new().unwrap_or_else(|err| {
-            eprintln!("stdio redirect error: {err}");
-            process::exit(1);
-        });
-        emulate_input_with_coverage(input, &mut coverage, |stdin| {
-            let cfg = ValkyrieConfig::new(
-                Arch::X86_64,
-                OsType::Linux,
-                rootfs_path.to_string_lossy().to_string(),
-            )?
-            .stdin_bytes(stdin)
-            .feed_elf(&target_path)?;
-            Valkyrie::new(cfg)
-        })
-        .unwrap_or_else(|err| {
+        runner.run_input(input).unwrap_or_else(|err| {
             eprintln!("emulation failed: {err}");
             process::exit(1);
         })
@@ -171,7 +226,7 @@ fn main() {
 
     let mut executor = InProcessExecutor::new(
         &mut harness,
-        tuple_list!(edges_observer),
+        libafl_bolts::tuples::tuple_list!(edges_observer),
         &mut fuzzer,
         &mut state,
         &mut event_manager,
@@ -181,9 +236,11 @@ fn main() {
         process::exit(1);
     });
 
-    let mutator = HavocScheduledMutator::new(tuple_list!(BitFlipMutator::new()));
-    let mut stages = tuple_list!(StdMutationalStage::new(mutator));
+    let mutator = HavocScheduledMutator::new(havoc_mutations());
+    let mut stages = libafl_bolts::tuples::tuple_list!(StdMutationalStage::new(mutator));
     let started = Instant::now();
+    let monitor_timeout = Duration::from_millis(250);
+    let mut first_crash_iter = None;
 
     for iter in 0..iterations {
         fuzzer
@@ -192,25 +249,25 @@ fn main() {
                 eprintln!("fuzzing failed at iter={iter}: {err}");
                 process::exit(1);
             });
+        event_manager
+            .maybe_report_progress(&mut state, monitor_timeout)
+            .unwrap_or_else(|err| {
+                eprintln!("monitor update failed at iter={iter}: {err}");
+                process::exit(1);
+            });
 
-        if iter == 0 || (iter + 1) % 100 == 0 || iter + 1 == iterations {
-            let executions = *state.executions();
-            let elapsed = started.elapsed().as_secs_f64();
-            let exec_per_sec = if elapsed > 0.0 {
-                executions as f64 / elapsed
-            } else {
-                0.0
-            };
-            println!(
-                "iter={} executions={} corpus={} crashes={} exec_per_sec={:.2}",
-                iter + 1,
-                executions,
-                state.corpus().count(),
-                state.solutions().count(),
-                exec_per_sec,
-            );
+        if state.solutions().count() > 0 && first_crash_iter.is_none() {
+            first_crash_iter = Some(iter + 1);
+            println!("crash discovered at iter={}", iter + 1);
         }
     }
+
+    event_manager
+        .report_progress(&mut state)
+        .unwrap_or_else(|err| {
+            eprintln!("final monitor update failed: {err}");
+            process::exit(1);
+        });
 
     let elapsed = started.elapsed().as_secs_f64();
     let executions = *state.executions();
@@ -226,4 +283,7 @@ fn main() {
         state.corpus().count(),
         state.solutions().count(),
     );
+    if let Some(iter) = first_crash_iter {
+        println!("first_crash_iter={iter}");
+    }
 }

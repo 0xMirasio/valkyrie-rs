@@ -32,7 +32,7 @@ impl Os for OsBlob {
         self.skip_exit_check
     }
 
-    fn run(&self, vk: &mut Valkyrie) -> Result<()> {
+    fn prepare_execution(&self, vk: &mut Valkyrie) -> Result<(u64, u64)> {
         vk.vstate = VState::Running;
 
         if vk.cfg.exit_point == 0 {
@@ -42,18 +42,18 @@ impl Os for OsBlob {
                 .saturating_add(vk.cfg.baremetal_code.len() as u64);
         }
 
+        Ok((vk.cfg.entry_point, vk.cfg.exit_point))
+    }
+
+    fn run(&self, vk: &mut Valkyrie) -> Result<()> {
+        let (entry_point, exit_point) = self.prepare_execution(vk)?;
+
         Logger::info(format!(
-            "OsBlob: Starting emulation at entry point {:#x} / {:#x}",
-            vk.cfg.entry_point, vk.cfg.exit_point
+            "OsBlob: Starting emulation at entry point {entry_point:#x} / {exit_point:#x}"
         ));
 
-        if let Err(err) = vk.uc.emu_start(
-            vk.cfg.entry_point,
-            vk.cfg.exit_point,
-            vk.cfg.timeout,
-            vk.cfg.count,
-        ) {
-            vk.panic_with_unicorn_context(err);
+        if let Err(err) = vk.uc.emu_start(entry_point, exit_point, vk.cfg.timeout, vk.cfg.count) {
+            vk.handle_unicorn_error(err)?;
         }
         vk.vstate = VState::Ended;
         Ok(())

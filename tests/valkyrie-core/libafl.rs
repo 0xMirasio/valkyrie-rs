@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use libafl::executors::ExitKind;
 use libafl::inputs::BytesInput;
-use valkyrie_rs::fuzzing::{DEFAULT_COVERAGE_MAP_SIZE, emulate_input_with_coverage};
+use valkyrie_rs::fuzzing::{
+    DEFAULT_COVERAGE_MAP_SIZE, ReusableEmulator, emulate_input_with_coverage,
+};
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
 
@@ -83,4 +85,31 @@ fn basic_libafl_x86_64_crash_feed_elf_static() {
 #[test]
 fn basic_libafl_x86_crash_feed_elf_static() {
     run_crash_test(Arch::X86);
+}
+
+#[test]
+fn basic_libafl_x86_64_reusable_runner_resets_between_inputs() {
+    let arch = Arch::X86_64;
+    let rootfs_path = linux_rootfs(arch);
+    let elf_path = crash_binary(arch);
+    let mut coverage = vec![0_u8; DEFAULT_COVERAGE_MAP_SIZE];
+
+    let cfg = ValkyrieConfig::new(
+        arch,
+        OsType::Linux,
+        rootfs_path.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .feed_elf(&elf_path)
+    .unwrap();
+    let vk = Valkyrie::new(cfg).unwrap();
+    let mut runner = ReusableEmulator::new(vk, &mut coverage).unwrap();
+
+    let ok_exit = runner.run_input(&BytesInput::new(b"NOPE".to_vec())).unwrap();
+    assert_eq!(ok_exit, ExitKind::Ok);
+    assert!(coverage.iter().any(|&byte| byte != 0));
+
+    let crash_exit = runner.run_input(&BytesInput::new(b"ABC".to_vec())).unwrap();
+    assert_eq!(crash_exit, ExitKind::Crash);
+    assert!(coverage.iter().any(|&byte| byte != 0));
 }

@@ -249,9 +249,7 @@ impl Os for OsLinux {
         self.skip_exit_check
     }
 
-    fn run(&self, vk: &mut Valkyrie) -> Result<()> {
-        vk.vstate = VState::Running;
-
+    fn prepare_execution(&self, vk: &mut Valkyrie) -> Result<(u64, u64)> {
         self.setup_tls_minimal(vk)?;
         self.setup_stack(vk)?;
 
@@ -265,6 +263,14 @@ impl Os for OsLinux {
             u64::MAX
         };
 
+        Ok((start, end))
+    }
+
+    fn run(&self, vk: &mut Valkyrie) -> Result<()> {
+        vk.vstate = VState::Running;
+
+        let (start, end) = self.prepare_execution(vk)?;
+
         Logger::info(format!(
             "OsLinux: Starting emulation at entry point {start:#x} / end={end:#x}"
         ));
@@ -272,7 +278,7 @@ impl Os for OsLinux {
         vk.mem.show_mappings();
 
         if let Err(err) = vk.uc.emu_start(start, end, vk.cfg.timeout, vk.cfg.count) {
-            vk.panic_with_unicorn_context(err);
+            vk.handle_unicorn_error(err)?;
         }
 
         vk.vstate = VState::Ended;

@@ -1,2 +1,2 @@
 default:
-	$(CC) -o target.bin -static main.c
+	$(CC) -nostdlib -static -s -o target.bin target.S

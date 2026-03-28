@@ -56,6 +56,9 @@ pub struct Valkyrie {
     pub guest_pdeathsig: i32,
     pub guest_dumpable: i32,
     pub stdin_offset: usize,
+    pub soft_unicorn_errors: bool,
+    pub prepared_start: Option<u64>,
+    pub prepared_end: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +107,9 @@ impl Valkyrie {
             guest_pdeathsig: 0,
             guest_dumpable: 1,
             stdin_offset: 0,
+            soft_unicorn_errors: false,
+            prepared_start: None,
+            prepared_end: None,
         };
 
         let mut ldr = loader::select_loader(vk.cfg.loader)?;
@@ -170,22 +176,72 @@ impl Valkyrie {
     }
 
     pub fn run(&mut self) -> Result<()> {
+        self.prepare_initial_run()?;
+        self.run_prepared()
+    }
+
+    pub(crate) fn prepare_initial_run(&mut self) -> Result<()> {
         self.reset_execution_state();
         self.refresh_ctx_ptr();
         os::register_syscall::install_syscall_hook(self)?;
         self.setup_trap()?;
         self.write_exit_trap()?;
+        Ok(())
+    }
+
+    pub(crate) fn run_prepared(&mut self) -> Result<()> {
+        self.refresh_ctx_ptr();
+        if let (Some(start), Some(end)) = (self.prepared_start, self.prepared_end) {
+            self.vstate = VState::Running;
+            if let Err(err) = self.uc.emu_start(start, end, self.cfg.timeout, self.cfg.count) {
+                self.handle_unicorn_error(err)?;
+            }
+            self.vstate = VState::Ended;
+            return Ok(());
+        }
 
         let os_runner = self.os.clone();
         self.vstate = VState::Running;
         os_runner.run(self)
     }
 
-    fn reset_execution_state(&mut self) {
+    pub(crate) fn reset_execution_state(&mut self) {
         self.vstate = VState::NotSet;
         self.exit_status = None;
         self.crashed = false;
         self.stdin_offset = 0;
+    }
+
+    pub(crate) fn set_stdin_bytes(&mut self, value: &[u8]) {
+        self.cfg.stdin_data.clear();
+        self.cfg.stdin_data.extend_from_slice(value);
+        self.stdin_offset = 0;
+    }
+
+    pub(crate) fn set_soft_unicorn_errors(&mut self, value: bool) {
+        self.soft_unicorn_errors = value;
+    }
+
+    pub(crate) fn set_prepared_execution_range(&mut self, start: u64, end: u64) {
+        self.prepared_start = Some(start);
+        self.prepared_end = Some(end);
+    }
+
+    pub(crate) fn handle_unicorn_error(
+        &mut self,
+        err: unicorn_engine::unicorn_const::uc_error,
+    ) -> Result<()> {
+        if self.soft_unicorn_errors {
+            self.crashed = true;
+            self.vstate = VState::Ended;
+            Logger::debug(
+                format!("Soft unicorn crash captured during fuzzing: {err:?}"),
+                self.cfg.verbose,
+            );
+            return Ok(());
+        }
+
+        self.panic_with_unicorn_context(err);
     }
 
     fn append_register_dump(&mut self, report: &mut String) {
