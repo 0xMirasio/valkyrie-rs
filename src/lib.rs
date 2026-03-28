@@ -3,6 +3,8 @@ pub mod common;
 pub mod config;
 pub mod error;
 pub mod fs;
+#[cfg(feature = "libafl")]
+pub mod fuzzing;
 pub mod hook;
 pub mod loader;
 pub mod logger;
@@ -45,6 +47,7 @@ pub struct Valkyrie {
     pub exit_trap_hook: Option<unicorn_engine::UcHookId>, // exit trap hook id (for baremetal)
     pub initial_sp: u64,                         // initial stack pointer
     pub exit_status: Option<u64>,                // guest exit status
+    pub crashed: bool,                           // guest crash status
     pub elf_auxv: Option<loader::elf::ElfAuxvInfo>, // ELF loader metadata for Linux startup
     pub linux_creds: LinuxCreds,                 // Linux credentials manager
     pub guest_rt_sigactions: HashMap<i32, Vec<u8>>,
@@ -52,6 +55,7 @@ pub struct Valkyrie {
     pub guest_prctl_name: [u8; 16],
     pub guest_pdeathsig: i32,
     pub guest_dumpable: i32,
+    pub stdin_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +95,7 @@ impl Valkyrie {
             exit_trap_hook: None,
             initial_sp: 0,
             exit_status: None,
+            crashed: false,
             elf_auxv: None,
             linux_creds: LinuxCreds::from_host(),
             guest_rt_sigactions: HashMap::new(),
@@ -98,6 +103,7 @@ impl Valkyrie {
             guest_prctl_name,
             guest_pdeathsig: 0,
             guest_dumpable: 1,
+            stdin_offset: 0,
         };
 
         let mut ldr = loader::select_loader(vk.cfg.loader)?;
@@ -164,6 +170,7 @@ impl Valkyrie {
     }
 
     pub fn run(&mut self) -> Result<()> {
+        self.reset_execution_state();
         self.refresh_ctx_ptr();
         os::register_syscall::install_syscall_hook(self)?;
         self.setup_trap()?;
@@ -172,6 +179,13 @@ impl Valkyrie {
         let os_runner = self.os.clone();
         self.vstate = VState::Running;
         os_runner.run(self)
+    }
+
+    fn reset_execution_state(&mut self) {
+        self.vstate = VState::NotSet;
+        self.exit_status = None;
+        self.crashed = false;
+        self.stdin_offset = 0;
     }
 
     fn append_register_dump(&mut self, report: &mut String) {
@@ -339,6 +353,7 @@ impl Valkyrie {
         &mut self,
         err: unicorn_engine::unicorn_const::uc_error,
     ) -> ! {
+        self.crashed = true;
         let color_red = "\u{1b}[1;31m";
         let color_reset = "\u{1b}[0m";
         let report = self.format_runtime_debug_table(format!(

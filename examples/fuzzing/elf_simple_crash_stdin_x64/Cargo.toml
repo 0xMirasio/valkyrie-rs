@@ -1,7 +1,0 @@
-[package]
-name = "elf_simple_crash_stdin_x64"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-valkyrie-rs = { path = "../../../" }

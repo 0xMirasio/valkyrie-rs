@@ -15,6 +15,7 @@ pub struct ValkyrieConfig {
     pub loader: LoaderType,       // loader
     pub rootfs: String,           // rootfspath
     pub argv: Vec<Vec<u8>>,       // guest argv
+    pub stdin_data: Vec<u8>,      // guest stdin buffer
     pub verbose: bool,            // verbosity
     pub endianess: Endianess,     // endianess
     pub archsize: u16,            // archsize
@@ -61,6 +62,7 @@ impl ValkyrieConfig {
             loader: LoaderType::Raw,
             rootfs,
             argv: Vec::new(),
+            stdin_data: Vec::new(),
             verbose: false,
             endianess,
             archsize,
@@ -164,6 +166,12 @@ impl ValkyrieConfig {
         S: Into<Vec<u8>>,
     {
         self.argv = values.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn stdin_bytes(mut self, value: &[u8]) -> Self {
+        self.stdin_data.clear();
+        self.stdin_data.extend_from_slice(value);
         self
     }
 

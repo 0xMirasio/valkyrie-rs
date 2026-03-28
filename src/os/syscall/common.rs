@@ -472,6 +472,7 @@ pub fn sys_tgkill(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
                 libc::SIGTRAP => "SIGTRAP",
                 _ => "UNKNOWN",
             };
+            vk.crashed = true;
             Logger::warning(format!(
                 "sys_tgkill() received signal {signal_name}. Terminating emulation"
             ));

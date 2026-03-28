@@ -312,9 +312,19 @@ pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let mut buffer = vec![0u8; count];
 
     let bytes_read: usize = if fd == 0 {
-        match io::stdin().read(&mut buffer) {
-            Ok(n) => n,
-            Err(_) => return Ok(last_errno()),
+        if vk.stdin_offset < vk.cfg.stdin_data.len() {
+            let remaining = &vk.cfg.stdin_data[vk.stdin_offset..];
+            let bytes_read = remaining.len().min(count);
+            buffer[..bytes_read].copy_from_slice(&remaining[..bytes_read]);
+            vk.stdin_offset += bytes_read;
+            bytes_read
+        } else if vk.cfg.stdin_data.is_empty() {
+            match io::stdin().read(&mut buffer) {
+                Ok(n) => n,
+                Err(_) => return Ok(last_errno()),
+            }
+        } else {
+            0
         }
     } else {
         let mut table = fd_table().lock().unwrap();
@@ -583,6 +593,37 @@ pub fn sys_access(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     Ok(0)
 }
 
+#[cfg(target_os = "linux")]
+fn write_guest_stat_native(vk: &mut Valkyrie, statbuf_ptr: u64, st: &libc::stat) -> Result<u64> {
+    let st_len = mem::size_of::<libc::stat>();
+    let st_bytes =
+        unsafe { std::slice::from_raw_parts((st as *const libc::stat).cast::<u8>(), st_len) };
+    vk.mem.write(&mut vk.uc, statbuf_ptr, st_bytes)?;
+    Ok(0)
+}
+
+pub fn sys_stat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let pathname_ptr = sctx.arg0();
+    let statbuf_ptr = sctx.arg1();
+    let file_name = read_guest_cstring(vk, pathname_ptr)?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("stat not supported on this platform. syscall will return -1;");
+        return Ok(last_errno());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let st = match stat_at(vk, libc::AT_FDCWD, &file_name, 0) {
+            Ok(st) => st,
+            Err(_) => return Ok(last_errno()),
+        };
+
+        write_guest_stat_native(vk, statbuf_ptr, &st)
+    }
+}
+
 pub fn sys_fstat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let fd = sctx.arg0();
     let statbuf_ptr = sctx.arg1();
@@ -601,10 +642,54 @@ pub fn sys_fstat(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
             return Ok(last_errno());
         }
 
-        let st_len = mem::size_of::<libc::stat>();
-        let st_bytes =
-            unsafe { std::slice::from_raw_parts((&st as *const libc::stat).cast::<u8>(), st_len) };
-        vk.mem.write(&mut vk.uc, statbuf_ptr, st_bytes)?;
+        write_guest_stat_native(vk, statbuf_ptr, &st)
+    }
+}
+
+pub fn sys_stat64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let pathname_ptr = sctx.arg0();
+    let statbuf_ptr = sctx.arg1();
+    let file_name = read_guest_cstring(vk, pathname_ptr)?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("stat64 not supported on this platform. syscall will return -1;");
+        return Ok(last_errno());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let st = match stat_at(vk, libc::AT_FDCWD, &file_name, 0) {
+            Ok(st) => st,
+            Err(_) => return Ok(last_errno()),
+        };
+
+        let st_bytes = pack_linux_x86_stat64_le(&st);
+        vk.mem.write(&mut vk.uc, statbuf_ptr, &st_bytes)?;
+        Ok(0)
+    }
+}
+
+pub fn sys_fstat64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0();
+    let statbuf_ptr = sctx.arg1();
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Logger::warning("fstat64 not supported on this platform. syscall will return -1;");
+        return Ok(last_errno());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let ret = unsafe { libc::fstat(fd as c_int, &mut st as *mut libc::stat) };
+        if ret == -1 {
+            return Ok(last_errno());
+        }
+
+        let st_bytes = pack_linux_x86_stat64_le(&st);
+        vk.mem.write(&mut vk.uc, statbuf_ptr, &st_bytes)?;
         Ok(0)
     }
 }
