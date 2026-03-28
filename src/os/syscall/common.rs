@@ -30,7 +30,10 @@ impl LinuxCreds {
 
 pub fn sys_exit(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     vk.exit_status = Some(sctx.arg0());
-    Logger::debug(String::from("sys_exit() called. Terminating emulation"), vk.cfg.verbose);
+    Logger::debug(
+        String::from("sys_exit() called. Terminating emulation"),
+        vk.cfg.verbose,
+    );
     vk.vstate = VState::Ended;
     let _ = vk.uc.emu_stop();
     Ok(0_u64)

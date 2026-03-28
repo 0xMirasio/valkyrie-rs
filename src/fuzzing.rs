@@ -312,7 +312,8 @@ fn restore_memory_layout(vk: &mut Valkyrie, snapshot_regions: &[VMemRegion]) -> 
     let current_regions = vk.mem.regions.clone();
 
     for region in &current_regions {
-        for (start, size) in subtract_snapshot_coverage(region.start, region.size, snapshot_regions) {
+        for (start, size) in subtract_snapshot_coverage(region.start, region.size, snapshot_regions)
+        {
             vk.uc
                 .mem_unmap(start, size)
                 .map_err(|_| ValkyrieError::UnicornGeneralError("mem_unmap failed"))?;

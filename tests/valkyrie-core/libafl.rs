@@ -105,7 +105,9 @@ fn basic_libafl_x86_64_reusable_runner_resets_between_inputs() {
     let vk = Valkyrie::new(cfg).unwrap();
     let mut runner = ReusableEmulator::new(vk, &mut coverage).unwrap();
 
-    let ok_exit = runner.run_input(&BytesInput::new(b"NOPE".to_vec())).unwrap();
+    let ok_exit = runner
+        .run_input(&BytesInput::new(b"NOPE".to_vec()))
+        .unwrap();
     assert_eq!(ok_exit, ExitKind::Ok);
     assert!(coverage.iter().any(|&byte| byte != 0));
 

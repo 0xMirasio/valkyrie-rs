@@ -52,7 +52,10 @@ impl Os for OsBlob {
             "OsBlob: Starting emulation at entry point {entry_point:#x} / {exit_point:#x}"
         ));
 
-        if let Err(err) = vk.uc.emu_start(entry_point, exit_point, vk.cfg.timeout, vk.cfg.count) {
+        if let Err(err) = vk
+            .uc
+            .emu_start(entry_point, exit_point, vk.cfg.timeout, vk.cfg.count)
+        {
             vk.handle_unicorn_error(err)?;
         }
         vk.vstate = VState::Ended;

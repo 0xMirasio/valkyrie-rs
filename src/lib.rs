@@ -193,7 +193,10 @@ impl Valkyrie {
         self.refresh_ctx_ptr();
         if let (Some(start), Some(end)) = (self.prepared_start, self.prepared_end) {
             self.vstate = VState::Running;
-            if let Err(err) = self.uc.emu_start(start, end, self.cfg.timeout, self.cfg.count) {
+            if let Err(err) = self
+                .uc
+                .emu_start(start, end, self.cfg.timeout, self.cfg.count)
+            {
                 self.handle_unicorn_error(err)?;
             }
             self.vstate = VState::Ended;
