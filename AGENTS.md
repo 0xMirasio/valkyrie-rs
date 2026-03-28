@@ -1,0 +1,3 @@
+- rust lief/capstone/unicorn compilation is slow. Always wait maximum 10minutes before cancelling build/pipeline. 
+- always initialize projects submodule
+- always use rust format! when logging. No outside parameters. format!("a={a:x}"), never format!("a={:x}", a)

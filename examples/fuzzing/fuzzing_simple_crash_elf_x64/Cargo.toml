@@ -1,0 +1,9 @@
+[package]
+name = "fuzzing_simple_crash_elf_x64"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libafl = "0.15.3"
+libafl_bolts = "0.15.3"
+valkyrie-rs = { path = "../../../", features = ["libafl"] }

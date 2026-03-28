@@ -2,15 +2,19 @@ name: Rust CI
 
 on:
   push:
+    branches:
+      - main
+      - dev
   pull_request:
-
 jobs:
-  ci:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
