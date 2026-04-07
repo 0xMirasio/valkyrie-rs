@@ -1,21 +1,74 @@
 # valkyrie-rs
 
-valkyrie-rs project. Rust binary Emulator
+`valkyrie-rs` is a Rust binary emulator aimed at fast program analysis and fuzzing workflows. It currently exposes:
 
-# why ?
+- architectures: `x86`, `x86_64`
+- guest modes: `BareMetal`, `Linux`
+- loaders: raw blobs and ELF binaries (Static/Dynamic)
+- LibAFL integration
 
-Fast Fuzzing is difficult : qiling/qemu is slow. This project aim to develop a rust binary emulator that can be binded to libafl project for fast fuzzing.
+Subproject usage:
+- Unicorn for cpu emulation
+- lief for elf parsers
+- capstone for disassembly
+- libafl for fuzzing
 
-# Build
+## Why
 
-System dependencies (recommended)
+Fast binary fuzzing is hard. Qiling got advanced support for emulation but fuzzing is very slow. Qemu can become hardcore to setup with complex target. The goal of this project is to provide a Rust-native emulator+fuzzer that is easier to embed into fuzzing workflows.
+
+## Repository Setup
+
+The repository depends on the `rootfs/` submodule. (qiling rootfs github)  
+
+```bash
+git clone https://github.com/0xMirasio/valkyrie-rs.git --depth 1 --recursive
 ```
-sudo apt install libclang-15-dev cmake gcc pkg-config g++
+
+## System Dependencies
+
+Recommended Ubuntu/Debian packages:
+
+```bash
+sudo apt install libclang-15-dev cmake gcc g++ pkg-config make
 ```
 
-build the Valkyrie library
-```
-git clone https://github.com/0xMirasio/valkyrie-rs.git --recurse --depth 1
-cd valkyrie-rs
+## Build
+
+Raw emulator
+```bash
 cargo build --release
 ```
+
+with LibAFL support:
+
+```bash
+cargo build --release --features libafl
+```
+
+## Quick Start
+
+### Run a Linux ELF
+
+```rust
+use valkyrie_rs::vtype::{Arch, OsType};
+use valkyrie_rs::{Valkyrie, ValkyrieConfig};
+
+fn main() -> valkyrie_rs::Result<()> {
+    let cfg = ValkyrieConfig::new(
+        Arch::X86_64,
+        OsType::Linux,
+        "rootfs/x8664_linux".to_string(),
+    )?
+    .argv([b"/bin/true".to_vec()])
+    .feed_elf("rootfs/x8664_linux/bin/true")?;
+
+    let mut vk = Valkyrie::new(cfg)?;
+    vk.run()?;
+
+    assert_eq!(vk.exit_status, Some(0));
+    Ok(())
+}
+```
+
+see examples for valkyrie usage. 

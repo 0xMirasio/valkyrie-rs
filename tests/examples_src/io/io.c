@@ -331,6 +331,16 @@ int main(void) {
         die("newfstatat");
     }
     assert((long long)st.st_size == 5);
+   
+    if (syscall(SYS_chmod, dst, 0600) != 0) {
+        die("chmod(syscall)");
+    }
+
+    memset(&st, 0, sizeof(st));
+    if (stat(dst, &st) != 0) {
+        die("stat(after chmod)");
+    }
+    assert((st.st_mode & 0777) == 0600);
 
     struct statfs sfs;
     memset(&sfs, 0, sizeof(sfs));

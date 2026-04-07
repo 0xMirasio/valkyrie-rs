@@ -1904,3 +1904,109 @@ pub fn sys_fstatat64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
         Ok(0)
     }
 }
+
+pub fn sys_fadvise64(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let fd = sctx.arg0() as c_int;
+    if fd < 0 {
+        return Ok(neg_errno(libc::EBADF));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (vk, sctx);
+        return Ok(neg_errno(libc::ENOSYS));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let (offset, len, advice) = match vk.cfg.arch {
+            crate::vtype::Arch::X86_64 => (
+                sctx.arg1() as libc::off_t,
+                sctx.arg2() as libc::off_t,
+                sctx.arg3() as c_int,
+            ),
+            crate::vtype::Arch::X86 => (
+                ((sctx.arg1() & 0xffff_ffff) | (sctx.arg2() << 32)) as libc::off_t,
+                sctx.arg3() as libc::off_t,
+                sctx.arg4() as c_int,
+            ),
+        };
+
+        let Some(host_fd) = host_fd_for_guest(fd as u64) else {
+            return Ok(neg_errno(libc::EBADF));
+        };
+
+        let rc = unsafe { libc::posix_fadvise(host_fd, offset, len, advice) };
+        if rc != 0 {
+            return Ok(neg_errno(rc));
+        }
+
+        Ok(0)
+    }
+}
+
+pub fn sys_unlink(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let path_ptr = sctx.arg0();
+    let path = read_guest_cstring(vk, path_ptr)?;
+    let host_path = match guest_path_at(vk, AT_FDCWD, &path) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EBADF)),
+    };
+
+    Logger::debug_cgrey(
+        format!("sys_unlink(path={})", host_path.display()),
+        vk.cfg.verbose,
+    );
+
+    let c_path = match CString::new(host_path.to_string_lossy().as_bytes()) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EINVAL)),
+    };
+
+    let rc = unsafe { libc::unlink(c_path.as_ptr()) };
+    if rc == -1 {
+        return Ok(last_errno());
+    }
+
+    Ok(0)
+}
+
+pub fn sys_rename(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let mut subctx = SubCtx::new([
+        AT_FDCWD as i64 as u64,
+        sctx.arg0(),
+        AT_FDCWD as i64 as u64,
+        sctx.arg1(),
+        0,
+        0,
+    ]);
+    sys_renameat(vk, &mut subctx)
+}
+
+pub fn sys_chmod(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
+    let path_ptr = sctx.arg0();
+    let mode = sctx.arg1() as libc::mode_t;
+
+    let path = read_guest_cstring(vk, path_ptr)?;
+    let host_path = match guest_path_at(vk, AT_FDCWD, &path) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EBADF)),
+    };
+
+    Logger::debug_cgrey(
+        format!("sys_chmod(path={}, mode={mode:#o})", host_path.display()),
+        vk.cfg.verbose,
+    );
+
+    let c_path = match CString::new(host_path.to_string_lossy().as_bytes()) {
+        Ok(path) => path,
+        Err(_) => return Ok(neg_errno(libc::EINVAL)),
+    };
+
+    let rc = unsafe { libc::chmod(c_path.as_ptr(), mode) };
+    if rc == -1 {
+        return Ok(last_errno());
+    }
+
+    Ok(0)
+}
