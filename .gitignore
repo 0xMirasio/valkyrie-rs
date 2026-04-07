@@ -28,3 +28,6 @@ rootfs/x86
 
 # dev file
 todo
+
+# target
+*.bin

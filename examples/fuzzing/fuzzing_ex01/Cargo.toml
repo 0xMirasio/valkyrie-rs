@@ -1,0 +1,10 @@
+[package]
+name = "fuzzing_ex01"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libafl = "0.15.3"
+libafl_bolts = "0.15.3"
+lief = "0.17.2"
+valkyrie-rs = { path = "../../../", features = ["libafl"] }

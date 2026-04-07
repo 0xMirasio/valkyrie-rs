@@ -300,6 +300,18 @@ fn readlink_target_for_guest(vk: &Valkyrie, path: &str) -> Option<Vec<u8>> {
     None
 }
 
+fn maybe_forward_guest_stdio(vk: &Valkyrie, fd: u64, buffer: &[u8]) -> io::Result<usize> {
+    if !vk.cfg.verbose {
+        return Ok(buffer.len());
+    }
+
+    match fd {
+        1 => io::stdout().write(buffer),
+        2 => io::stderr().write(buffer),
+        _ => Err(io::Error::from_raw_os_error(libc::EBADF)),
+    }
+}
+
 pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let fd = sctx.arg0();
     let buf_addr = sctx.arg1();
@@ -759,11 +771,7 @@ pub fn sys_write(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let buffer = vk.mem.read(&mut vk.uc, buf_addr, count)?;
 
     let bytes_written: usize = match fd {
-        1 => match io::stdout().write(&buffer) {
-            Ok(n) => n,
-            Err(_) => return Ok(last_errno()),
-        },
-        2 => match io::stderr().write(&buffer) {
+        1 | 2 => match maybe_forward_guest_stdio(vk, fd, &buffer) {
             Ok(n) => n,
             Err(_) => return Ok(last_errno()),
         },
@@ -829,8 +837,7 @@ pub fn sys_writev(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
         let buffer = vk.mem.read(&mut vk.uc, iov_base, iov_len)?;
         let write_result = match fd {
-            1 => io::stdout().write(&buffer),
-            2 => io::stderr().write(&buffer),
+            1 | 2 => maybe_forward_guest_stdio(vk, fd, &buffer),
             _ => match table_guard.as_mut() {
                 Some(table) => match table.files.get_mut(&fd) {
                     Some(vkf) => vkf.file.write(&buffer),
