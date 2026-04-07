@@ -215,16 +215,19 @@ impl Valkyrie {
         self.stdin_offset = 0;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_stdin_bytes(&mut self, value: &[u8]) {
         self.cfg.stdin_data.clear();
         self.cfg.stdin_data.extend_from_slice(value);
         self.stdin_offset = 0;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_soft_unicorn_errors(&mut self, value: bool) {
         self.soft_unicorn_errors = value;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_prepared_execution_range(&mut self, start: u64, end: u64) {
         self.prepared_start = Some(start);
         self.prepared_end = Some(end);

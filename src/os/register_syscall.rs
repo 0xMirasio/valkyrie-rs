@@ -133,6 +133,10 @@ pub const SYSCALL_TABLE_MAPPER: &[(&str, SysFn)] = &[
     ("getdents64", sys_getdents64),
     ("statfs", sys_statfs),
     ("statfs64", sys_statfs64),
+    ("fadvise64", sys_fadvise64),
+    ("rename", sys_rename),
+    ("chmod", sys_chmod),
+    ("unlink", sys_unlink),
 ];
 
 pub fn dispatch_syscall_by_name(name: &str, vk: &mut Valkyrie, subctx: &mut SubCtx) -> Result<u64> {
