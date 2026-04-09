@@ -18,7 +18,7 @@ fn basic_common_x64_feed_elf_dynamic() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     .feed_elf(common_bin_path)
     .unwrap();
 
@@ -48,7 +48,7 @@ fn basic_common_x86_feed_elf_dynamic() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     //.disassemble(true)
     .feed_elf(common_bin_path)
     .unwrap();

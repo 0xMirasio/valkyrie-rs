@@ -17,6 +17,7 @@ pub use arch::VArch;
 pub use config::ValkyrieConfig;
 pub use error::Result;
 pub use hook::{HookEnv, VCoreHooks};
+pub use logger::Verbosity;
 pub use memory::VMemory;
 pub use os::VCoreOs;
 pub use os::syscall::common::LinuxCreds;
@@ -70,6 +71,7 @@ pub struct State {
 impl Valkyrie {
     //Valkyrie Instance
     pub fn new(cfg: ValkyrieConfig) -> Result<Self> {
+        Logger::configure(cfg.verbose);
         let vcorehook: VCoreHooks<Valkyrie> = VCoreHooks::new();
         let vstruct = VCoreStructs::new(cfg.endianess, cfg.archsize).unwrap();
         let vstate = VState::NotSet;

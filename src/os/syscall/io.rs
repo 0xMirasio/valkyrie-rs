@@ -301,7 +301,7 @@ fn readlink_target_for_guest(vk: &Valkyrie, path: &str) -> Option<Vec<u8>> {
 }
 
 fn maybe_forward_guest_stdio(vk: &Valkyrie, fd: u64, buffer: &[u8]) -> io::Result<usize> {
-    if !vk.cfg.verbose {
+    if !vk.cfg.verbose.forwards_guest_stdio() {
         return Ok(buffer.len());
     }
 

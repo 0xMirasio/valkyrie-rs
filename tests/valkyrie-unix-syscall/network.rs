@@ -45,7 +45,7 @@ fn run_network_guest(arch: Arch, enable_host_tcp: bool) -> Valkyrie {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     .feed_elf(network_bin_path)
     .unwrap();
 

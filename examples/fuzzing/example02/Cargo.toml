@@ -1,5 +1,5 @@
 [package]
-name = "fuzzing_ex01"
+name = "example02"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,3 +8,11 @@ libafl = "0.15.3"
 libafl_bolts = "0.15.3"
 lief = "0.17.2"
 valkyrie-rs = { path = "../../../", features = ["libafl"] }
+
+[profile.fuzz]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+incremental = false
+debug = 0

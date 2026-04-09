@@ -34,7 +34,7 @@ fn basic_io_x86_64_feed_elf_dynamic() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     //.disassemble(true)
     .feed_elf(io_bin_path)
     .unwrap();
@@ -79,7 +79,7 @@ fn basic_io_x86_feed_elf_dynamic() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     //.disassemble(true)
     .feed_elf(io_bin_path)
     .unwrap();

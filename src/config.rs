@@ -1,7 +1,7 @@
 pub use crate::arch;
 pub use crate::error::ValkyrieError;
 pub use crate::hook::VCoreHooks;
-pub use crate::logger::Logger;
+pub use crate::logger::{Logger, Verbosity};
 pub use crate::vstruct::VCoreStructs;
 pub use crate::vtype::{Arch, Endianess, LoaderType, OsType, PAGE_SIZE, VState};
 
@@ -16,7 +16,7 @@ pub struct ValkyrieConfig {
     pub rootfs: String,           // rootfspath
     pub argv: Vec<Vec<u8>>,       // guest argv
     pub stdin_data: Vec<u8>,      // guest stdin buffer
-    pub verbose: bool,            // verbosity
+    pub verbose: Verbosity,       // verbosity
     pub endianess: Endianess,     // endianess
     pub archsize: u16,            // archsize
     pub baremetal_code: Vec<u8>,  // user baremetal code
@@ -37,8 +37,6 @@ pub struct ValkyrieConfig {
 // implement a new ValkyrieConfig.
 impl ValkyrieConfig {
     pub fn new(arch: Arch, os: OsType, rootfs: String) -> Result<Self, ValkyrieError> {
-        Logger::info("New Valkyrie instance");
-
         let path = Path::new(&rootfs);
 
         if !path.exists() {
@@ -46,10 +44,6 @@ impl ValkyrieConfig {
         }
 
         let (endianess, archsize) = arch::defaults_for_arch(arch);
-
-        Logger::success(format!(
-            "guessed arch defaults: arch={arch:?}, archsize={archsize}bit, endianess={endianess:?}"
-        ));
 
         // todo : add profile management
         let code_ram_size: u64 = (PAGE_SIZE as u64) * 10000; // 40000Kb default ram space
@@ -63,7 +57,7 @@ impl ValkyrieConfig {
             rootfs,
             argv: Vec::new(),
             stdin_data: Vec::new(),
-            verbose: false,
+            verbose: Verbosity::Basic,
             endianess,
             archsize,
             baremetal_code: Vec::new(),
@@ -154,8 +148,8 @@ impl ValkyrieConfig {
     }
 
     // setter ValkyrieConfig::verbose
-    pub fn verbose(mut self, value: bool) -> Self {
-        self.verbose = value;
+    pub fn verbose(mut self, value: u8) -> Self {
+        self.verbose = Verbosity::from(value);
         self
     }
 

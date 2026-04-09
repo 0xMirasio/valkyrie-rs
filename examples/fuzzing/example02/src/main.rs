@@ -1,10 +1,3 @@
-/*
-todo :
-- multiclients 
-- drcov 
-- better fuzzer output : logs/queues/crashs/state/
-*/
-
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -28,9 +21,11 @@ use lief::elf::Binary;
 use lief::generic::Symbol as _;
 use valkyrie_rs::arch::regs::VRegister;
 use valkyrie_rs::arch::x86_64::RegX86_64;
-use valkyrie_rs::fuzzing::{
-    DEFAULT_COVERAGE_MAP_SIZE, FunctionSnapshotConfig, FunctionSnapshotEmulator,
-    SnapshotInputLocation, SnapshotInputSize, ValkyrieMonitor,
+use valkyrie_rs::fuzzing::core::DEFAULT_COVERAGE_MAP_SIZE;
+use valkyrie_rs::fuzzing::monitor::{AflOutLayout, ValkyrieMonitor};
+use valkyrie_rs::fuzzing::snapshot::{
+    FunctionSnapshotConfig, FunctionSnapshotEmulator, SnapshotInputLocation, SnapshotInputSize,
+    SnapshotRestoreMode,
 };
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
@@ -42,6 +37,17 @@ const GUEST_BINARY_ARG0: &str = "/bin/target_png_parser";
 const GUEST_INPUT_PATH: &str = "/tmp/valkyrie_fuzzing_ex01/input.png";
 const PARSE_ENTRY_SYMBOL: &str = "scan_png";
 const BOOTSTRAP_SAMPLE_NAME: &str = "basic_valid.png";
+const RESTORE_MODE: SnapshotRestoreMode = SnapshotRestoreMode::EditedMemory;
+
+fn parse_iterations() -> usize {
+    match std::env::args().nth(1) {
+        Some(value) => value.parse::<usize>().unwrap_or_else(|err| {
+            eprintln!("invalid iteration count {value:?}: {err}");
+            process::exit(2);
+        }),
+        None => DEFAULT_ITERATIONS,
+    }
+}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -67,20 +73,11 @@ fn ram_workspace_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/dev/shm").join(RAM_WORKSPACE_NAME))
 }
 
-fn ensure_output_layout() -> Result<(PathBuf, PathBuf), String> {
-    let ram_root = ram_workspace_root();
-    let queue = ram_root.join("queue");
-    let crashes = ram_root.join("crashes");
-
-    fs::create_dir_all(&queue)
-        .map_err(|err| format!("failed to create {}: {err}", queue.display()))?;
-    fs::create_dir_all(&crashes)
-        .map_err(|err| format!("failed to create {}: {err}", crashes.display()))?;
-
-    ensure_local_output_link("queue", &queue)?;
-    ensure_local_output_link("crashes", &crashes)?;
-
-    Ok((queue, crashes))
+fn ensure_output_layout() -> Result<AflOutLayout, String> {
+    let layout = AflOutLayout::create(ram_workspace_root().join("afl_out"))
+        .map_err(|err| format!("failed to create afl_out layout: {err}"))?;
+    ensure_local_output_link("afl_out", layout.root_dir())?;
+    Ok(layout)
 }
 
 fn guest_input_host_path(rootfs_path: &Path) -> PathBuf {
@@ -138,15 +135,6 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), String> {
             target.display()
         )
     })
-}
-
-#[cfg(not(unix))]
-fn create_symlink(target: &Path, link: &Path) -> Result<(), String> {
-    let _ = target;
-    let _ = link;
-    Err(String::from(
-        "this example expects a unix host for /dev/shm-backed output links",
-    ))
 }
 
 fn load_seed_corpus() -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
@@ -209,7 +197,7 @@ fn resolve_symbol_address(target_path: &Path, symbol_name: &str) -> Result<u64, 
 }
 
 fn main() {
-    let iterations = DEFAULT_ITERATIONS;
+    let iterations = parse_iterations();
     let repo_root = repo_root();
     let rootfs_path = repo_root.join("rootfs").join("x8664_linux");
     let target_path = example_root().join("target.bin");
@@ -217,7 +205,7 @@ fn main() {
         eprintln!("failed to prepare guest input path: {err}");
         process::exit(2);
     });
-    let (queue_dir, crashes_dir) = ensure_output_layout().unwrap_or_else(|err| {
+    let afl_out = ensure_output_layout().unwrap_or_else(|err| {
         eprintln!("failed to prepare LibAFL output layout: {err}");
         process::exit(2);
     });
@@ -259,14 +247,17 @@ fn main() {
 
     let mut state = StdState::new(
         StdRand::with_seed(0x504E4758),
-        InMemoryOnDiskCorpus::<BytesInput>::new(&queue_dir).unwrap_or_else(|err| {
-            eprintln!("failed to create queue dir {}: {err}", queue_dir.display());
+        InMemoryOnDiskCorpus::<BytesInput>::new(afl_out.queue_dir()).unwrap_or_else(|err| {
+            eprintln!(
+                "failed to create queue dir {}: {err}",
+                afl_out.queue_dir().display()
+            );
             process::exit(1);
         }),
-        InMemoryOnDiskCorpus::<BytesInput>::new(&crashes_dir).unwrap_or_else(|err| {
+        InMemoryOnDiskCorpus::<BytesInput>::new(afl_out.crash_dir()).unwrap_or_else(|err| {
             eprintln!(
-                "failed to create crashes dir {}: {err}",
-                crashes_dir.display()
+                "failed to create crash dir {}: {err}",
+                afl_out.crash_dir().display()
             );
             process::exit(1);
         }),
@@ -290,17 +281,9 @@ fn main() {
 
     let scheduler = QueueScheduler::new();
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
-    let monitor = ValkyrieMonitor::new("fuzzing_ex01 :: in-memory PNG parser").with_output_dirs(
-        queue_dir.display().to_string(),
-        crashes_dir.display().to_string(),
-    );
+    let monitor =
+        ValkyrieMonitor::new("fuzzing_ex01 :: in-memory PNG parser").with_afl_out(afl_out.clone());
     let mut event_manager = SimpleEventManager::new(monitor);
-
-    println!("queue={}", queue_dir.display());
-    println!("crashes={}", crashes_dir.display());
-    println!("guest_input={GUEST_INPUT_PATH}");
-    println!("bootstrap_sample={}", bootstrap_sample.display());
-    println!("parse_entry=0x{parse_entry_addr:x}");
 
     let cfg = ValkyrieConfig::new(
         Arch::X86_64,
@@ -311,6 +294,7 @@ fn main() {
         eprintln!("failed to build Valkyrie config: {err}");
         process::exit(1);
     })
+    .verbose(0)
     .argv(guest_argv())
     .feed_elf(&target_path)
     .unwrap_or_else(|err| {
@@ -329,6 +313,7 @@ fn main() {
         input_buffer: SnapshotInputLocation::Register(VRegister::X86_64(RegX86_64::RDI)),
         input_capacity: MAX_GUEST_INPUT_SIZE,
         input_size: SnapshotInputSize::Register(VRegister::X86_64(RegX86_64::RSI)),
+        restore_mode: RESTORE_MODE,
     };
     let mut runner =
         FunctionSnapshotEmulator::new(vk, &mut coverage, snapshot_cfg).unwrap_or_else(|err| {
@@ -358,7 +343,7 @@ fn main() {
     let mutator = HavocScheduledMutator::new(havoc_mutations());
     let mut stages = libafl_bolts::tuples::tuple_list!(StdMutationalStage::new(mutator));
     let started = Instant::now();
-    let monitor_timeout = Duration::from_millis(250);
+    let monitor_timeout = Duration::from_millis(5000);
     let mut first_crash_iter = None;
 
     for iter in 0..iterations {

@@ -1,8 +1,8 @@
 [package]
 name = "valkyrie-rs"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
-description = "Rust binary emulator"
+description = "Rust binary emulator and fuzzer wrapper"
 license = "Apache"
 readme = "README.md"
 authors = ["0xMirasio"]

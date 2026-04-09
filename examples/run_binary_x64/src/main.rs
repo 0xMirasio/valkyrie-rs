@@ -50,7 +50,7 @@ fn run() -> Result<()> {
         OsType::Linux,
         cli.rootfs_path.to_string_lossy().to_string(),
     )?
-    .verbose(true)
+    .verbose(3)
     .argv(guest_argv)
     .feed_elf(&cli.binary_path)?;
 
