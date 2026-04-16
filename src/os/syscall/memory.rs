@@ -282,7 +282,7 @@ pub fn sys_mprotect(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
             });
         }
     }
-    vk.mem.regions = updated_regions;
+    vk.mem.set_regions(updated_regions);
 
     Ok(0)
 }

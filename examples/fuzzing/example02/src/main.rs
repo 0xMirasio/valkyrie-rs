@@ -5,20 +5,21 @@ use std::process;
 use std::time::Duration;
 use std::time::Instant;
 
-use libafl::corpus::{Corpus, InMemoryOnDiskCorpus, Testcase};
+use libafl::corpus::{Corpus, InMemoryOnDiskCorpus, OnDiskCorpus, Testcase};
 use libafl::events::{ProgressReporter, SimpleEventManager};
 use libafl::executors::{ExitKind, inprocess::InProcessExecutor};
 use libafl::feedbacks::{CrashFeedback, MaxMapFeedback};
 use libafl::fuzzer::{Fuzzer, StdFuzzer};
 use libafl::inputs::BytesInput;
-use libafl::mutators::{HavocScheduledMutator, havoc_mutations};
+use libafl::mutators::{
+    BitFlipMutator, ByteDecMutator, ByteIncMutator, HavocScheduledMutator,
+    SingleChoiceScheduledMutator, havoc_mutations,
+};
 use libafl::observers::StdMapObserver;
 use libafl::schedulers::QueueScheduler;
 use libafl::stages::StdMutationalStage;
 use libafl::state::{HasCorpus, HasExecutions, HasSolutions, StdState};
 use libafl_bolts::rands::StdRand;
-use lief::elf::Binary;
-use lief::generic::Symbol as _;
 use valkyrie_rs::arch::regs::VRegister;
 use valkyrie_rs::arch::x86_64::RegX86_64;
 use valkyrie_rs::fuzzing::core::DEFAULT_COVERAGE_MAP_SIZE;
@@ -35,7 +36,6 @@ const MAX_GUEST_INPUT_SIZE: usize = 4096;
 const RAM_WORKSPACE_NAME: &str = "valkyrie-fuzzing_ex01";
 const GUEST_BINARY_ARG0: &str = "/bin/target_png_parser";
 const GUEST_INPUT_PATH: &str = "/tmp/valkyrie_fuzzing_ex01/input.png";
-const PARSE_ENTRY_SYMBOL: &str = "scan_png";
 const BOOTSTRAP_SAMPLE_NAME: &str = "basic_valid.png";
 const RESTORE_MODE: SnapshotRestoreMode = SnapshotRestoreMode::EditedMemory;
 
@@ -178,24 +178,6 @@ fn bootstrap_sample_path(samples: &[(PathBuf, Vec<u8>)]) -> PathBuf {
         .unwrap_or_else(|| samples[0].0.clone())
 }
 
-fn resolve_symbol_address(target_path: &Path, symbol_name: &str) -> Result<u64, String> {
-    let target_path_text = target_path.to_string_lossy();
-    let elf = Binary::parse(target_path_text.as_ref())
-        .ok_or_else(|| format!("failed to parse ELF {}", target_path.display()))?;
-
-    if let Some(symbol) = elf.symtab_symbol_by_name(symbol_name) {
-        return Ok(symbol.value());
-    }
-    if let Some(symbol) = elf.dynamic_symbol_by_name(symbol_name) {
-        return Ok(symbol.value());
-    }
-
-    Err(format!(
-        "failed to resolve symbol {symbol_name} in {}",
-        target_path.display()
-    ))
-}
-
 fn main() {
     let iterations = parse_iterations();
     let repo_root = repo_root();
@@ -233,11 +215,7 @@ fn main() {
         process::exit(2);
     });
 
-    let parse_entry_addr =
-        resolve_symbol_address(&target_path, PARSE_ENTRY_SYMBOL).unwrap_or_else(|err| {
-            eprintln!("failed to resolve parser symbol: {err}");
-            process::exit(2);
-        });
+    let parse_entry_addr = 0x00000000004018BF;
 
     let mut coverage = vec![0_u8; DEFAULT_COVERAGE_MAP_SIZE].into_boxed_slice();
     let edges_observer =
@@ -254,7 +232,7 @@ fn main() {
             );
             process::exit(1);
         }),
-        InMemoryOnDiskCorpus::<BytesInput>::new(afl_out.crash_dir()).unwrap_or_else(|err| {
+        OnDiskCorpus::<BytesInput>::new(afl_out.crash_dir()).unwrap_or_else(|err| {
             eprintln!(
                 "failed to create crash dir {}: {err}",
                 afl_out.crash_dir().display()
@@ -340,8 +318,18 @@ fn main() {
         process::exit(1);
     });
 
-    let mutator = HavocScheduledMutator::new(havoc_mutations());
-    let mut stages = libafl_bolts::tuples::tuple_list!(StdMutationalStage::new(mutator));
+    let deterministic_mutator =
+        SingleChoiceScheduledMutator::new(libafl_bolts::tuples::tuple_list!(
+            BitFlipMutator::new(),
+            ByteIncMutator::new(),
+            ByteDecMutator::new(),
+        ));
+    let havoc_mutator = HavocScheduledMutator::new(havoc_mutations());
+    let mut stages = libafl_bolts::tuples::tuple_list!(
+        StdMutationalStage::new(deterministic_mutator),
+        StdMutationalStage::new(havoc_mutator),
+    );
+
     let started = Instant::now();
     let monitor_timeout = Duration::from_millis(5000);
     let mut first_crash_iter = None;

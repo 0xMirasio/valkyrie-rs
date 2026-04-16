@@ -186,18 +186,7 @@ pub fn format_valkyrie_snapshot(snapshot: &ValkyrieSnapshot) -> String {
     if let Some(afl_out_dir) = &snapshot.afl_out_dir {
         let _ = writeln!(rendered, " afl_out         : {afl_out_dir}");
     }
-    if let Some(queue_dir) = &snapshot.queue_dir {
-        let _ = writeln!(rendered, " queue dir       : {queue_dir}");
-    }
-    if let Some(crash_dir) = &snapshot.crash_dir {
-        let _ = writeln!(rendered, " crash dir       : {crash_dir}");
-    }
-    if let Some(config_dir) = &snapshot.config_dir {
-        let _ = writeln!(rendered, " config dir      : {config_dir}");
-    }
-    if let Some(state_dir) = &snapshot.state_dir {
-        let _ = writeln!(rendered, " state dir       : {state_dir}");
-    }
+
     let _ = writeln!(rendered, " exec speed      : {}/s", snapshot.execs_per_sec);
     let _ = writeln!(rendered, " total execs     : {}", snapshot.executions);
     let _ = writeln!(rendered, " last new path   : {}", snapshot.last_new_path);

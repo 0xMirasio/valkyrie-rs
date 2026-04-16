@@ -27,6 +27,7 @@ struct EmulatorSnapshot {
     context: Context,
     regions: Vec<VMemRegion>,
     writable_regions: Vec<WritableRegionSnapshot>,
+    memory_layout_revision: u64,
     linux_creds: crate::LinuxCreds,
     guest_rt_sigactions: HashMap<i32, Vec<u8>>,
     guest_rt_sigmask: Vec<u8>,
@@ -494,14 +495,16 @@ impl DirtyPageTracker {
     }
 
     fn lookup_page_index(&self, page_start: u64) -> Option<usize> {
-        self.ranges.iter().find_map(|range| {
-            if page_start < range.page_start || page_start >= range.page_end {
-                return None;
-            }
+        let idx = self
+            .ranges
+            .partition_point(|range| range.page_end <= page_start);
+        let range = self.ranges.get(idx)?;
+        if page_start < range.page_start || page_start >= range.page_end {
+            return None;
+        }
 
-            let offset = ((page_start - range.page_start) / self.page_size) as usize;
-            Some(range.page_base + offset)
-        })
+        let offset = ((page_start - range.page_start) / self.page_size) as usize;
+        Some(range.page_base + offset)
     }
 
     fn mark_page(&mut self, page_index: usize) {
@@ -534,7 +537,7 @@ fn capture_snapshot(vk: &mut Valkyrie) -> Result<EmulatorSnapshot> {
         .filter(|region| (region.prot & Prot::WRITE) == Prot::WRITE)
         .map(|region| (region.start, region.size, region.prot))
         .collect::<Vec<_>>();
-    let writable_regions = writable_region_metas
+    let mut writable_regions = writable_region_metas
         .into_iter()
         .map(|(start, size, prot)| -> Result<WritableRegionSnapshot> {
             Ok(WritableRegionSnapshot {
@@ -543,11 +546,13 @@ fn capture_snapshot(vk: &mut Valkyrie) -> Result<EmulatorSnapshot> {
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    writable_regions.sort_by_key(|region| region.start);
 
     Ok(EmulatorSnapshot {
         context,
         regions: vk.mem.regions.clone(),
         writable_regions,
+        memory_layout_revision: vk.mem.layout_revision,
         linux_creds: vk.linux_creds,
         guest_rt_sigactions: vk.guest_rt_sigactions.clone(),
         guest_rt_sigmask: vk.guest_rt_sigmask.clone(),
@@ -561,25 +566,39 @@ fn restore_snapshot(
     vk: &mut Valkyrie,
     snapshot: &EmulatorSnapshot,
     restore_mode: SnapshotRestoreMode,
-    dirty_tracker: Option<&mut DirtyPageTracker>,
+    mut dirty_tracker: Option<&mut DirtyPageTracker>,
 ) -> Result<()> {
     match restore_mode {
         SnapshotRestoreMode::Raw => {}
         SnapshotRestoreMode::FullMemory => {
-            if !same_memory_layout(&vk.mem.regions, &snapshot.regions) {
-                restore_memory_layout(vk, &snapshot.regions)?;
+            if vk.mem.layout_revision != snapshot.memory_layout_revision {
+                restore_layout_if_needed(vk, snapshot)?;
             }
             restore_all_writable_regions(vk, snapshot)?;
-            clear_dirty_tracker(dirty_tracker);
+            clear_dirty_tracker(match &mut dirty_tracker {
+                Some(dirty_tracker) => Some(&mut **dirty_tracker),
+                None => None,
+            });
         }
         SnapshotRestoreMode::EditedMemory => {
-            let layout_changed = !same_memory_layout(&vk.mem.regions, &snapshot.regions);
-            if layout_changed {
-                restore_memory_layout(vk, &snapshot.regions)?;
+            let layout_changed = vk.mem.layout_revision != snapshot.memory_layout_revision;
+            let needs_full_restore = layout_changed
+                || restore_dirty_pages(
+                    vk,
+                    snapshot,
+                    match &mut dirty_tracker {
+                        Some(dirty_tracker) => Some(&mut **dirty_tracker),
+                        None => None,
+                    },
+                )
+                .is_err();
+            if needs_full_restore {
+                restore_layout_if_needed(vk, snapshot)?;
                 restore_all_writable_regions(vk, snapshot)?;
-                clear_dirty_tracker(dirty_tracker);
-            } else {
-                restore_dirty_pages(vk, snapshot, dirty_tracker)?;
+                clear_dirty_tracker(match &mut dirty_tracker {
+                    Some(dirty_tracker) => Some(&mut **dirty_tracker),
+                    None => None,
+                });
             }
         }
     }
@@ -616,10 +635,16 @@ fn restore_dirty_pages(
     };
 
     let page_size = u64::from(PAGE_SIZE);
-    let pages = dirty_tracker.take_dirty_pages();
+    let mut pages = dirty_tracker.take_dirty_pages();
     if pages.is_empty() {
         return Ok(());
     }
+
+    pages.sort_unstable();
+    let mut pending_start = 0_u64;
+    let mut pending_end = 0_u64;
+    let mut pending_region_start = 0_u64;
+    let mut has_pending = false;
 
     for page_start in pages {
         let Some(region) = find_snapshot_writable_region(snapshot, page_start) else {
@@ -634,12 +659,34 @@ fn restore_dirty_pages(
             continue;
         }
 
-        let offset = (restore_start - region.start) as usize;
-        let size = (restore_end - restore_start) as usize;
-        vk.mem.write(
-            &mut vk.uc,
-            restore_start,
-            &region.data[offset..offset + size],
+        if has_pending && pending_region_start == region.start && pending_end == restore_start {
+            pending_end = restore_end;
+            continue;
+        }
+
+        if has_pending {
+            write_snapshot_region_slice(
+                vk,
+                snapshot,
+                pending_region_start,
+                pending_start,
+                pending_end,
+            )?;
+        }
+
+        pending_region_start = region.start;
+        pending_start = restore_start;
+        pending_end = restore_end;
+        has_pending = true;
+    }
+
+    if has_pending {
+        write_snapshot_region_slice(
+            vk,
+            snapshot,
+            pending_region_start,
+            pending_start,
+            pending_end,
         )?;
     }
 
@@ -650,16 +697,56 @@ fn find_snapshot_writable_region(
     snapshot: &EmulatorSnapshot,
     addr: u64,
 ) -> Option<&WritableRegionSnapshot> {
-    snapshot.writable_regions.iter().find(|region| {
-        let end = region.start.saturating_add(region.data.len() as u64);
-        addr >= region.start && addr < end
-    })
+    let idx = snapshot
+        .writable_regions
+        .partition_point(|region| region.start.saturating_add(region.data.len() as u64) <= addr);
+    let region = snapshot.writable_regions.get(idx)?;
+    let end = region.start.saturating_add(region.data.len() as u64);
+    if addr >= region.start && addr < end {
+        Some(region)
+    } else {
+        None
+    }
+}
+
+fn write_snapshot_region_slice(
+    vk: &mut Valkyrie,
+    snapshot: &EmulatorSnapshot,
+    region_start: u64,
+    restore_start: u64,
+    restore_end: u64,
+) -> Result<()> {
+    if restore_end <= restore_start {
+        return Ok(());
+    }
+
+    let Some(region) = find_snapshot_writable_region(snapshot, region_start) else {
+        return Ok(());
+    };
+
+    let offset = (restore_start - region.start) as usize;
+    let size = (restore_end - restore_start) as usize;
+    vk.mem.write(
+        &mut vk.uc,
+        restore_start,
+        &region.data[offset..offset + size],
+    )
 }
 
 fn clear_dirty_tracker(dirty_tracker: Option<&mut DirtyPageTracker>) {
     if let Some(dirty_tracker) = dirty_tracker {
         dirty_tracker.clear();
     }
+}
+
+fn restore_layout_if_needed(vk: &mut Valkyrie, snapshot: &EmulatorSnapshot) -> Result<()> {
+    let qiling_like_ok = restore_layout_qiling_like(vk, &snapshot.regions)?;
+    let exact_layout = qiling_like_ok && same_memory_layout(&vk.mem.regions, &snapshot.regions);
+    if !exact_layout {
+        restore_memory_layout(vk, &snapshot.regions)?;
+    }
+    vk.mem.set_layout_revision(snapshot.memory_layout_revision);
+    Ok(())
 }
 
 fn same_memory_layout(current_regions: &[VMemRegion], snapshot_regions: &[VMemRegion]) -> bool {
@@ -735,8 +822,38 @@ fn restore_memory_layout(vk: &mut Valkyrie, snapshot_regions: &[VMemRegion]) -> 
         }
     }
 
-    vk.mem.regions = snapshot_regions.to_vec();
+    vk.mem.set_regions(snapshot_regions.to_vec());
     Ok(())
+}
+
+fn restore_layout_qiling_like(vk: &mut Valkyrie, snapshot_regions: &[VMemRegion]) -> Result<bool> {
+    for region in snapshot_regions {
+        if !is_range_mapped(&vk.mem.regions, region.start, region.size) {
+            if !is_range_available(&vk.mem.regions, region.start, region.size) {
+                return Ok(false);
+            }
+            vk.mem
+                .map(
+                    &mut vk.uc,
+                    region.start,
+                    region.size,
+                    region.prot,
+                    region.info.clone(),
+                )
+                .map_err(|_| ValkyrieError::UnicornGeneralError("mem_map failed"))?;
+            continue;
+        }
+
+        if vk
+            .uc
+            .mem_protect(region.start, region.size, region.prot)
+            .is_err()
+        {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 fn subtract_snapshot_coverage(
@@ -806,4 +923,13 @@ fn is_range_mapped(regions: &[VMemRegion], start: u64, size: u64) -> bool {
     }
 
     cursor >= end
+}
+
+fn is_range_available(regions: &[VMemRegion], start: u64, size: u64) -> bool {
+    let end = start.saturating_add(size);
+    !regions.iter().any(|region| {
+        let region_start = region.start;
+        let region_end = region.start.saturating_add(region.size);
+        start < region_end && end > region_start
+    })
 }

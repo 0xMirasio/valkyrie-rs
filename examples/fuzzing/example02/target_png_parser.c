@@ -247,7 +247,7 @@ static int parse_itxt_chunk(const uint8_t *chunk_data, size_t chunk_len,
     return 1;
 }
 
-static void scan_png(const uint8_t *buffer, size_t size) {
+void scan_png(const uint8_t *buffer, size_t size) {
     static const uint8_t png_magic[8] = {0x89, 'P', 'N', 'G',
                                          '\r', '\n', 0x1a, '\n'};
     struct png_state state = {0};
