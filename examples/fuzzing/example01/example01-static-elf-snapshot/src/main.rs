@@ -1,27 +1,35 @@
+use std::path::Path;
 use std::path::PathBuf;
 use std::process;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use libafl::corpus::{Corpus, InMemoryOnDiskCorpus, Testcase};
+use libafl::corpus::{Corpus, InMemoryCorpus, OnDiskCorpus, Testcase};
 use libafl::events::{ProgressReporter, SimpleEventManager};
 use libafl::executors::{ExitKind, inprocess::InProcessExecutor};
 use libafl::feedbacks::{CrashFeedback, MaxMapFeedback};
 use libafl::fuzzer::{Fuzzer, StdFuzzer};
 use libafl::inputs::BytesInput;
-use libafl::mutators::{HavocScheduledMutator, havoc_mutations};
+use libafl::mutators::{
+    BitFlipMutator, ByteDecMutator, ByteIncMutator, HavocScheduledMutator,
+    SingleChoiceScheduledMutator, havoc_mutations,
+};
 use libafl::observers::StdMapObserver;
 use libafl::schedulers::QueueScheduler;
 use libafl::stages::StdMutationalStage;
 use libafl::state::{HasCorpus, HasExecutions, HasSolutions, StdState};
 use libafl_bolts::rands::StdRand;
+use lief::elf::Binary;
+use lief::generic::Symbol as _;
 use valkyrie_rs::fuzzing::core::DEFAULT_COVERAGE_MAP_SIZE;
 use valkyrie_rs::fuzzing::monitor::{AflOutLayout, ValkyrieMonitor};
-use valkyrie_rs::fuzzing::snapshot::ReusableEmulator;
+use valkyrie_rs::fuzzing::snapshot::{ReusableEmulator, SnapshotRestoreMode};
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
 
-const DEFAULT_ITERATIONS: usize = 1_000;
+const DEFAULT_ITERATIONS: usize = 25_000;
+const FUZZ_SEED: u64 = 0xA11CE003;
+const MAIN_SYMBOL: &str = "main";
+const MONITOR_TITLE: &str = "example01-static-elf-snapshot";
 
 fn parse_iterations() -> usize {
     match std::env::args().nth(1) {
@@ -35,7 +43,7 @@ fn parse_iterations() -> usize {
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
+        .join("../../../../")
         .canonicalize()
         .unwrap_or_else(|err| {
             eprintln!("failed to resolve repo root: {err}");
@@ -51,6 +59,24 @@ fn ensure_output_layout() -> Result<AflOutLayout, String> {
     let root = example_root();
     AflOutLayout::create(root.join("afl_out"))
         .map_err(|err| format!("failed to create afl_out layout: {err}"))
+}
+
+fn resolve_symbol_address(target_path: &Path, symbol_name: &str) -> Result<u64, String> {
+    let target_path_text = target_path.to_string_lossy();
+    let elf = Binary::parse(target_path_text.as_ref())
+        .ok_or_else(|| format!("failed to parse ELF {}", target_path.display()))?;
+
+    if let Some(symbol) = elf.symtab_symbol_by_name(symbol_name) {
+        return Ok(symbol.value());
+    }
+    if let Some(symbol) = elf.dynamic_symbol_by_name(symbol_name) {
+        return Ok(symbol.value());
+    }
+
+    Err(format!(
+        "failed to resolve symbol {symbol_name} in {}",
+        target_path.display()
+    ))
 }
 
 fn main() {
@@ -72,13 +98,11 @@ fn main() {
         process::exit(2);
     }
 
-    /*
-    Classic libafl setup:
-        - define a coverage vector
-        - edges observer via StdMapObserver
-        - feedback and objective
-        - a seed state
-    */
+    let main_addr = resolve_symbol_address(&target_path, MAIN_SYMBOL).unwrap_or_else(|err| {
+        eprintln!("failed to resolve snapshot entry symbol: {err}");
+        process::exit(2);
+    });
+
     let mut coverage = vec![0_u8; DEFAULT_COVERAGE_MAP_SIZE].into_boxed_slice();
     let edges_observer =
         unsafe { StdMapObserver::from_mut_ptr("edges", coverage.as_mut_ptr(), coverage.len()) };
@@ -86,15 +110,9 @@ fn main() {
     let mut objective = CrashFeedback::new();
 
     let mut state = StdState::new(
-        StdRand::with_seed(0xC0DEC0DE),
-        InMemoryOnDiskCorpus::<BytesInput>::new(afl_out.queue_dir()).unwrap_or_else(|err| {
-            eprintln!(
-                "failed to create corpus dir {}: {err}",
-                afl_out.queue_dir().display()
-            );
-            process::exit(1);
-        }),
-        InMemoryOnDiskCorpus::<BytesInput>::new(afl_out.crash_dir()).unwrap_or_else(|err| {
+        StdRand::with_seed(FUZZ_SEED),
+        InMemoryCorpus::<BytesInput>::new(),
+        OnDiskCorpus::<BytesInput>::new(afl_out.crash_dir()).unwrap_or_else(|err| {
             eprintln!(
                 "failed to create crash dir {}: {err}",
                 afl_out.crash_dir().display()
@@ -109,8 +127,7 @@ fn main() {
         process::exit(1);
     });
 
-    // we add sample corpus to state
-    for seed in [b"E".as_slice()] {
+    for seed in [b"\x05".as_slice()] {
         state
             .corpus_mut()
             .add(Testcase::new(BytesInput::new(seed.to_vec())))
@@ -122,8 +139,7 @@ fn main() {
 
     let scheduler = QueueScheduler::new();
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
-    let monitor =
-        ValkyrieMonitor::new("fuzzing_ex01 :: reusable ELF runner").with_afl_out(afl_out.clone());
+    let monitor = ValkyrieMonitor::new(MONITOR_TITLE).with_afl_out(afl_out.clone());
     let mut event_manager = SimpleEventManager::new(monitor);
 
     let cfg = ValkyrieConfig::new(
@@ -148,8 +164,15 @@ fn main() {
         eprintln!("failed to create Valkyrie instance: {err}");
         process::exit(1);
     });
-    let mut runner = ReusableEmulator::new(vk, &mut coverage).unwrap_or_else(|err| {
-        eprintln!("failed to create reusable emulator: {err}");
+
+    let mut runner = ReusableEmulator::new_at_entry_with_restore_mode(
+        vk,
+        &mut coverage,
+        main_addr,
+        SnapshotRestoreMode::EditedMemory,
+    )
+    .unwrap_or_else(|err| {
+        eprintln!("failed to create snapshot emulator: {err}");
         process::exit(1);
     });
 
@@ -171,9 +194,17 @@ fn main() {
         eprintln!("failed to create LibAFL executor: {err}");
         process::exit(1);
     });
-
-    let mutator = HavocScheduledMutator::new(havoc_mutations());
-    let mut stages = libafl_bolts::tuples::tuple_list!(StdMutationalStage::new(mutator));
+    let deterministic_mutator =
+        SingleChoiceScheduledMutator::new(libafl_bolts::tuples::tuple_list!(
+            BitFlipMutator::new(),
+            ByteIncMutator::new(),
+            ByteDecMutator::new(),
+        ));
+    let havoc_mutator = HavocScheduledMutator::new(havoc_mutations());
+    let mut stages = libafl_bolts::tuples::tuple_list!(
+        StdMutationalStage::new(deterministic_mutator),
+        StdMutationalStage::new(havoc_mutator),
+    );
     let started = Instant::now();
     let monitor_timeout = Duration::from_millis(250);
     let mut first_crash_iter = None;
@@ -194,7 +225,7 @@ fn main() {
 
         if state.solutions().count() > 0 && first_crash_iter.is_none() {
             first_crash_iter = Some(iter + 1);
-            println!("crash discovered at iter={}", iter + 1);
+            println!("first crash discovered at iter={}", iter + 1);
         }
     }
 
@@ -212,6 +243,7 @@ fn main() {
     } else {
         0.0
     };
+
     println!(
         "done iterations={} executions={} corpus={} crashes={} elapsed_sec={elapsed:.6} exec_per_sec={exec_per_sec:.2}",
         iterations,

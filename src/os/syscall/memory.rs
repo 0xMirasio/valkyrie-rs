@@ -4,6 +4,7 @@ use crate::arch::x86_64::RegX86_64;
 use crate::common::{align_down, align_up, neg_errno};
 use crate::error::Result;
 use crate::fs::fd_table;
+use crate::memory::VMemRegion;
 use crate::os::register_syscall::SubCtx;
 use crate::vtype::*;
 
@@ -240,13 +241,48 @@ pub fn sys_mprotect(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
     let uc_prot = prot_from_flags(prot);
     vk.uc.mem_protect(start, size, uc_prot)?;
+    let mut updated_regions = Vec::with_capacity(vk.mem.regions.len().saturating_mul(2));
+    for region in vk.mem.regions.drain(..) {
+        let region_start = region.start;
+        let region_end = region.start.saturating_add(region.size);
+        if end <= region_start || start >= region_end {
+            updated_regions.push(region);
+            continue;
+        }
 
-    for region in vk.mem.regions.iter_mut() {
-        let region_end = region.start + region.size;
-        if start < region_end && end > region.start {
-            region.prot = uc_prot;
+        let info = region.info;
+        let previous_prot = region.prot;
+
+        if region_start < start {
+            updated_regions.push(VMemRegion {
+                start: region_start,
+                size: start.saturating_sub(region_start),
+                prot: previous_prot,
+                info: info.clone(),
+            });
+        }
+
+        let protected_start = region_start.max(start);
+        let protected_end = region_end.min(end);
+        if protected_end > protected_start {
+            updated_regions.push(VMemRegion {
+                start: protected_start,
+                size: protected_end.saturating_sub(protected_start),
+                prot: uc_prot,
+                info: info.clone(),
+            });
+        }
+
+        if protected_end < region_end {
+            updated_regions.push(VMemRegion {
+                start: protected_end,
+                size: region_end.saturating_sub(protected_end),
+                prot: previous_prot,
+                info,
+            });
         }
     }
+    vk.mem.regions = updated_regions;
 
     Ok(0)
 }

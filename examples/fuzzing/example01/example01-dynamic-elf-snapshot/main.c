@@ -1,6 +1,4 @@
-#include <signal.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 int main(void) {
     char buf[100] = {0};
@@ -21,6 +19,6 @@ int main(void) {
         return 0;
     }
 
-    raise(SIGSEGV);
+    *(volatile unsigned char *)0 = 0x41;
     return 0;
 }

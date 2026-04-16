@@ -82,10 +82,6 @@ impl AflOutLayout {
     fn write_internal_config(&self) -> std::io::Result<()> {
         let mut rendered = String::new();
         let _ = writeln!(rendered, "afl_out={}", self.root_dir.display());
-        let _ = writeln!(rendered, "queue={}", self.queue_dir.display());
-        let _ = writeln!(rendered, "crash={}", self.crash_dir.display());
-        let _ = writeln!(rendered, "config={}", self.config_dir.display());
-        let _ = writeln!(rendered, "state={}", self.state_dir.display());
         let _ = writeln!(rendered, "state_interval={}", self.state_save_interval);
 
         fs::write(self.config_dir.join("fuzzer.conf"), rendered)
@@ -99,10 +95,6 @@ impl AflOutLayout {
     {
         let mut rendered = String::new();
         let _ = writeln!(rendered, "afl_out={}", self.root_dir.display());
-        let _ = writeln!(rendered, "queue={}", self.queue_dir.display());
-        let _ = writeln!(rendered, "crash={}", self.crash_dir.display());
-        let _ = writeln!(rendered, "config={}", self.config_dir.display());
-        let _ = writeln!(rendered, "state={}", self.state_dir.display());
         let _ = writeln!(rendered, "state_interval={}", self.state_save_interval);
         for (key, value) in entries {
             let _ = writeln!(rendered, "{}={}", key.as_ref(), value.as_ref());
@@ -210,7 +202,7 @@ pub fn format_valkyrie_snapshot(snapshot: &ValkyrieSnapshot) -> String {
     let _ = writeln!(rendered, " total execs     : {}", snapshot.executions);
     let _ = writeln!(rendered, " last new path   : {}", snapshot.last_new_path);
     let _ = writeln!(rendered, " last crash      : {}", snapshot.last_crash);
-    let _ = writeln!(rendered, " coverage        : {}", coverage);
+    let _ = writeln!(rendered, " coverage        : {coverage}");
     let _ = writeln!(
         rendered,
         " pending/favored : {}/{}",
@@ -221,7 +213,7 @@ pub fn format_valkyrie_snapshot(snapshot: &ValkyrieSnapshot) -> String {
         " own/imported    : {}/{}",
         snapshot.own_finds, snapshot.imported
     );
-    let _ = writeln!(rendered, " stability       : {}", stability);
+    let _ = writeln!(rendered, " stability       : {stability}");
 
     if snapshot.user_stats.is_empty() {
         let _ = writeln!(rendered, " user stats      : n/a");
