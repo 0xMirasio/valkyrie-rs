@@ -566,7 +566,9 @@ fn restore_snapshot(
     match restore_mode {
         SnapshotRestoreMode::Raw => {}
         SnapshotRestoreMode::FullMemory => {
-            restore_memory_layout(vk, &snapshot.regions)?;
+            if !same_memory_layout(&vk.mem.regions, &snapshot.regions) {
+                restore_memory_layout(vk, &snapshot.regions)?;
+            }
             restore_all_writable_regions(vk, snapshot)?;
             clear_dirty_tracker(dirty_tracker);
         }

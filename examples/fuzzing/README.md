@@ -6,4 +6,3 @@
 - `example01-dynamic-full_load` : dynamic ELF, full-load reusable runner (`x8664_linux_glibc2.39` rootfs)
 - `example01-elf-snapshot` : dynamic ELF, snapshot at `main` (`x8664_linux_glibc2.39` rootfs)
 - example02 : x64 dynamic elf / complex crash in png parsing / afl loop via snapshot restauration before scan_png. valkyrie monitor, `afl_out/` layout on `/dev/shm`
-- example03 :  DRCOV coverage trace generation example

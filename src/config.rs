@@ -2,8 +2,9 @@ pub use crate::arch;
 pub use crate::error::ValkyrieError;
 pub use crate::hook::VCoreHooks;
 pub use crate::logger::{Logger, Verbosity};
+pub use crate::trace::TraceOptions;
 pub use crate::vstruct::VCoreStructs;
-pub use crate::vtype::{Arch, Endianess, LoaderType, OsType, PAGE_SIZE, VState};
+pub use crate::vtype::{Arch, Endianess, LoaderType, OsType, PAGE_SIZE, TraceFormat, VState};
 
 use std::fs;
 use std::path::Path;
@@ -32,6 +33,7 @@ pub struct ValkyrieConfig {
     pub disassemble: bool, // disassemble execution
     pub debug: bool,       // debug mode
     pub debug_port: u16,   // debug server port
+    pub trace: Option<TraceOptions>,
 }
 
 // implement a new ValkyrieConfig.
@@ -73,6 +75,7 @@ impl ValkyrieConfig {
             disassemble: false,
             debug: false,
             debug_port: 1234,
+            trace: None,
         })
     }
 
@@ -143,7 +146,12 @@ impl ValkyrieConfig {
         }
 
         self.loader = LoaderType::Elf;
-        self.elf_file = Some(path_ref.to_string_lossy().to_string());
+        let canonical_path = fs::canonicalize(path_ref).map_err(|e| {
+            ValkyrieError::BadConfig(Box::leak(
+                format!("failed to canonicalize {}: {}", path_ref.display(), e).into_boxed_str(),
+            ))
+        })?;
+        self.elf_file = Some(canonical_path.to_string_lossy().to_string());
         Ok(self)
     }
 
@@ -185,6 +193,27 @@ impl ValkyrieConfig {
     pub fn debug_port(mut self, value: u16) -> Self {
         self.debug_port = value;
         self
+    }
+
+    pub fn save_trace(mut self, format: TraceFormat) -> Self {
+        self.trace = Some(TraceOptions::new(format));
+        self
+    }
+
+    pub fn save_trace_path<P: AsRef<Path>>(mut self, path: P) -> Result<Self, ValkyrieError> {
+        let trace = self.trace.as_mut().ok_or(ValkyrieError::BadConfig(
+            "save_trace_path requires save_trace to be configured first",
+        ))?;
+
+        let path = path.as_ref();
+        if path.as_os_str().is_empty() {
+            return Err(ValkyrieError::BadConfig(
+                "save_trace_path requires a non-empty path",
+            ));
+        }
+
+        trace.output = path.to_path_buf();
+        Ok(self)
     }
 
     // setter ValkyrieConfig::endianess

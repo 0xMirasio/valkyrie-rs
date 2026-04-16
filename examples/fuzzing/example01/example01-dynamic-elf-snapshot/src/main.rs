@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process;
 use std::time::{Duration, Instant};
 
-use libafl::corpus::{Corpus, InMemoryCorpus, OnDiskCorpus, Testcase};
+use libafl::corpus::{Corpus, InMemoryOnDiskCorpus, OnDiskCorpus, Testcase};
 use libafl::events::{ProgressReporter, SimpleEventManager};
 use libafl::executors::{ExitKind, inprocess::InProcessExecutor};
 use libafl::feedbacks::{CrashFeedback, MaxMapFeedback};
@@ -111,7 +111,13 @@ fn main() {
 
     let mut state = StdState::new(
         StdRand::with_seed(FUZZ_SEED),
-        InMemoryCorpus::<BytesInput>::new(),
+        InMemoryOnDiskCorpus::<BytesInput>::new(afl_out.queue_dir()).unwrap_or_else(|err| {
+            eprintln!(
+                "failed to create queue dir {}: {err}",
+                afl_out.queue_dir().display()
+            );
+            process::exit(1);
+        }),
         OnDiskCorpus::<BytesInput>::new(afl_out.crash_dir()).unwrap_or_else(|err| {
             eprintln!(
                 "failed to create crash dir {}: {err}",

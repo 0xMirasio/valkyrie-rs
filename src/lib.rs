@@ -10,6 +10,7 @@ pub mod loader;
 pub mod logger;
 pub mod memory;
 pub mod os;
+pub mod trace;
 pub mod vstruct;
 pub mod vtype;
 
@@ -22,7 +23,7 @@ pub use memory::VMemory;
 pub use os::VCoreOs;
 pub use os::syscall::common::LinuxCreds;
 pub use vstruct::VCoreStructs;
-pub use vtype::VState;
+pub use vtype::{TraceFormat, VState};
 
 use error::ValkyrieError;
 use logger::Logger;
@@ -60,7 +61,11 @@ pub struct Valkyrie {
     pub soft_unicorn_errors: bool,
     pub prepared_start: Option<u64>,
     pub prepared_end: Option<u64>,
+    pub trace_recorder: Option<trace::TraceRecorder>,
+    pub trace_hook: Option<hook::HookRet>,
 }
+
+pub const DRCOV: TraceFormat = TraceFormat::Drcov;
 
 #[derive(Debug, Clone)]
 pub struct State {
@@ -112,6 +117,8 @@ impl Valkyrie {
             soft_unicorn_errors: false,
             prepared_start: None,
             prepared_end: None,
+            trace_recorder: None,
+            trace_hook: None,
         };
 
         let mut ldr = loader::select_loader(vk.cfg.loader)?;
@@ -134,6 +141,8 @@ impl Valkyrie {
             udbserver::udbserver(&mut vk.uc, vk.cfg.debug_port, ldr.load_address())
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
         }
+
+        vk.enable_trace_recording()?;
 
         Ok(vk)
     }
@@ -202,12 +211,15 @@ impl Valkyrie {
                 self.handle_unicorn_error(err)?;
             }
             self.vstate = VState::Ended;
+            self.flush_trace_if_enabled()?;
             return Ok(());
         }
 
         let os_runner = self.os.clone();
         self.vstate = VState::Running;
-        os_runner.run(self)
+        os_runner.run(self)?;
+        self.flush_trace_if_enabled()?;
+        Ok(())
     }
 
     pub(crate) fn reset_execution_state(&mut self) {
@@ -233,6 +245,59 @@ impl Valkyrie {
     pub(crate) fn set_prepared_execution_range(&mut self, start: u64, end: u64) {
         self.prepared_start = Some(start);
         self.prepared_end = Some(end);
+    }
+
+    fn enable_trace_recording(&mut self) -> Result<()> {
+        let Some(trace_cfg) = self.cfg.trace.clone() else {
+            return Ok(());
+        };
+
+        self.trace_recorder = Some(trace::TraceRecorder::new(trace_cfg.clone()));
+        self.refresh_ctx_ptr();
+        let hooks_ptr: *mut VCoreHooks<Valkyrie> = {
+            let env = self.uc.get_data_mut();
+            &mut env.hooks as *mut _
+        };
+
+        let hook = unsafe {
+            (*hooks_ptr).hook_block(
+                &mut self.uc,
+                |vk, addr, size, _state: Option<&mut ()>| {
+                    vk.record_trace_block(addr, size);
+                    None
+                },
+                None::<()>,
+                1,
+                0,
+            )
+        }?;
+        self.trace_hook = Some(hook);
+
+        if let Some(recorder) = &self.trace_recorder {
+            Logger::debug(
+                format!(
+                    "Trace recording enabled: format={:?} output={}",
+                    trace_cfg.format,
+                    recorder.output_path().display()
+                ),
+                self.cfg.verbose,
+            );
+        }
+
+        Ok(())
+    }
+
+    fn record_trace_block(&mut self, addr: u64, size: u32) {
+        if let Some(recorder) = self.trace_recorder.as_mut() {
+            recorder.record_block(addr, size, &self.mem.regions, self.cfg.elf_file.as_deref());
+        }
+    }
+
+    fn flush_trace_if_enabled(&mut self) -> Result<()> {
+        if let Some(recorder) = self.trace_recorder.as_ref() {
+            recorder.flush()?;
+        }
+        Ok(())
     }
 
     pub(crate) fn handle_unicorn_error(
