@@ -304,15 +304,15 @@ impl<C> VCoreHooks<C> {
         if let Some(list) = self.hooks.get_mut(&hook_type) {
             for hook in list.iter_mut() {
                 match args {
-                    HookArgs::Trace { addr, .. } => {
-                        if !Self::bound_check(hook.begin, hook.end, addr) {
-                            continue;
-                        }
+                    HookArgs::Trace { addr, .. }
+                        if !Self::bound_check(hook.begin, hook.end, addr) =>
+                    {
+                        continue;
                     }
-                    HookArgs::Mem { addr, .. } => {
-                        if !Self::bound_check(hook.begin, hook.end, addr) {
-                            continue;
-                        }
+                    HookArgs::Mem { addr, .. }
+                        if !Self::bound_check(hook.begin, hook.end, addr) =>
+                    {
+                        continue;
                     }
                     _ => {}
                 }
