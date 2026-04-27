@@ -20,6 +20,7 @@ pub struct VMemRegion {
 #[derive(Debug)]
 pub struct VMemory {
     pub regions: Vec<VMemRegion>,
+    pub layout_revision: u64,
     disassembler: Option<Capstone>,
     pub heap_addr_start: u64,
     pub heap_addr_exit: u64,
@@ -37,6 +38,7 @@ impl VMemory {
 
         Ok(Self {
             regions: Vec::new(),
+            layout_revision: 0,
             disassembler,
             heap_addr_start: 0,
             heap_addr_exit: 0,
@@ -73,6 +75,7 @@ impl VMemory {
             prot,
             info: info.into(),
         });
+        self.mark_layout_changed();
 
         Ok(())
     }
@@ -190,6 +193,7 @@ impl VMemory {
 
         let end = addr.saturating_add(size);
         let mut updated = Vec::with_capacity(self.regions.len());
+        let mut changed = false;
 
         for region in self.regions.drain(..) {
             let region_end = region.start.saturating_add(region.size);
@@ -197,6 +201,7 @@ impl VMemory {
                 updated.push(region);
                 continue;
             }
+            changed = true;
 
             if addr > region.start {
                 updated.push(VMemRegion {
@@ -218,6 +223,22 @@ impl VMemory {
         }
 
         self.regions = updated;
+        if changed {
+            self.mark_layout_changed();
+        }
+    }
+
+    pub fn set_regions(&mut self, regions: Vec<VMemRegion>) {
+        self.regions = regions;
+        self.mark_layout_changed();
+    }
+
+    pub fn mark_layout_changed(&mut self) {
+        self.layout_revision = self.layout_revision.wrapping_add(1);
+    }
+
+    pub fn set_layout_revision(&mut self, revision: u64) {
+        self.layout_revision = revision;
     }
 
     pub fn show_instructions(vk: &mut Valkyrie, addr: u64, size: usize) -> Result<()> {

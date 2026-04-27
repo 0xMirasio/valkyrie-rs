@@ -1,9 +1,10 @@
 pub use crate::arch;
 pub use crate::error::ValkyrieError;
 pub use crate::hook::VCoreHooks;
-pub use crate::logger::Logger;
+pub use crate::logger::{Logger, Verbosity};
+pub use crate::trace::TraceOptions;
 pub use crate::vstruct::VCoreStructs;
-pub use crate::vtype::{Arch, Endianess, LoaderType, OsType, PAGE_SIZE, VState};
+pub use crate::vtype::{Arch, Endianess, LoaderType, OsType, PAGE_SIZE, TraceFormat, VState};
 
 use std::fs;
 use std::path::Path;
@@ -16,7 +17,7 @@ pub struct ValkyrieConfig {
     pub rootfs: String,           // rootfspath
     pub argv: Vec<Vec<u8>>,       // guest argv
     pub stdin_data: Vec<u8>,      // guest stdin buffer
-    pub verbose: bool,            // verbosity
+    pub verbose: Verbosity,       // verbosity
     pub endianess: Endianess,     // endianess
     pub archsize: u16,            // archsize
     pub baremetal_code: Vec<u8>,  // user baremetal code
@@ -32,13 +33,12 @@ pub struct ValkyrieConfig {
     pub disassemble: bool, // disassemble execution
     pub debug: bool,       // debug mode
     pub debug_port: u16,   // debug server port
+    pub trace: Option<TraceOptions>,
 }
 
 // implement a new ValkyrieConfig.
 impl ValkyrieConfig {
     pub fn new(arch: Arch, os: OsType, rootfs: String) -> Result<Self, ValkyrieError> {
-        Logger::info("New Valkyrie instance");
-
         let path = Path::new(&rootfs);
 
         if !path.exists() {
@@ -46,10 +46,6 @@ impl ValkyrieConfig {
         }
 
         let (endianess, archsize) = arch::defaults_for_arch(arch);
-
-        Logger::success(format!(
-            "guessed arch defaults: arch={arch:?}, archsize={archsize}bit, endianess={endianess:?}"
-        ));
 
         // todo : add profile management
         let code_ram_size: u64 = (PAGE_SIZE as u64) * 10000; // 40000Kb default ram space
@@ -63,7 +59,7 @@ impl ValkyrieConfig {
             rootfs,
             argv: Vec::new(),
             stdin_data: Vec::new(),
-            verbose: false,
+            verbose: Verbosity::Basic,
             endianess,
             archsize,
             baremetal_code: Vec::new(),
@@ -79,6 +75,7 @@ impl ValkyrieConfig {
             disassemble: false,
             debug: false,
             debug_port: 1234,
+            trace: None,
         })
     }
 
@@ -149,13 +146,18 @@ impl ValkyrieConfig {
         }
 
         self.loader = LoaderType::Elf;
-        self.elf_file = Some(path_ref.to_string_lossy().to_string());
+        let canonical_path = fs::canonicalize(path_ref).map_err(|e| {
+            ValkyrieError::BadConfig(Box::leak(
+                format!("failed to canonicalize {}: {}", path_ref.display(), e).into_boxed_str(),
+            ))
+        })?;
+        self.elf_file = Some(canonical_path.to_string_lossy().to_string());
         Ok(self)
     }
 
     // setter ValkyrieConfig::verbose
-    pub fn verbose(mut self, value: bool) -> Self {
-        self.verbose = value;
+    pub fn verbose(mut self, value: u8) -> Self {
+        self.verbose = Verbosity::from(value);
         self
     }
 
@@ -191,6 +193,27 @@ impl ValkyrieConfig {
     pub fn debug_port(mut self, value: u16) -> Self {
         self.debug_port = value;
         self
+    }
+
+    pub fn save_trace(mut self, format: TraceFormat) -> Self {
+        self.trace = Some(TraceOptions::new(format));
+        self
+    }
+
+    pub fn save_trace_path<P: AsRef<Path>>(mut self, path: P) -> Result<Self, ValkyrieError> {
+        let trace = self.trace.as_mut().ok_or(ValkyrieError::BadConfig(
+            "save_trace_path requires save_trace to be configured first",
+        ))?;
+
+        let path = path.as_ref();
+        if path.as_os_str().is_empty() {
+            return Err(ValkyrieError::BadConfig(
+                "save_trace_path requires a non-empty path",
+            ));
+        }
+
+        trace.output = path.to_path_buf();
+        Ok(self)
     }
 
     // setter ValkyrieConfig::endianess

@@ -30,6 +30,11 @@ pub enum VState {
     Ended,   // emulation has finished
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraceFormat {
+    Drcov,
+}
+
 pub const PAGE_SIZE: u32 = 0x1000; //4Kb page
 pub const MAX_PATH_LEN: usize = 4096; // max path length
 

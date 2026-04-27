@@ -4,9 +4,8 @@ use std::path::{Path, PathBuf};
 
 use libafl::executors::ExitKind;
 use libafl::inputs::BytesInput;
-use valkyrie_rs::fuzzing::{
-    DEFAULT_COVERAGE_MAP_SIZE, ReusableEmulator, emulate_input_with_coverage,
-};
+use valkyrie_rs::fuzzing::core::{DEFAULT_COVERAGE_MAP_SIZE, emulate_input_with_coverage};
+use valkyrie_rs::fuzzing::snapshot::ReusableEmulator;
 use valkyrie_rs::vtype::{Arch, OsType};
 use valkyrie_rs::{Valkyrie, ValkyrieConfig};
 

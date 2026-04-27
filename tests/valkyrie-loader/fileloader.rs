@@ -107,7 +107,7 @@ fn io_write_x86_64_oslinux_fileloader() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     .code_base_addr(ENTRY_POINT)
     .entry_point(ENTRY_POINT)
     .feed_file(&fixture_path)
@@ -161,7 +161,7 @@ fn basic_common_x86_feed_file() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     .code_base_addr(ENTRY_POINT)
     .entry_point(ENTRY_POINT)
     .feed_file(&fixture_path)

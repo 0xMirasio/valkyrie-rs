@@ -143,15 +143,13 @@ impl Loader for LoaderElf {
             "[heap]",
         )?;
 
-        if vk.cfg.verbose {
-            Logger::debug(
-                format!(
-                    "LoaderElf: entry={runtime_entry:#x} load_address={:#x} max_addr={max_addr:#x}",
-                    self.load_address,
-                ),
-                vk.cfg.verbose,
-            );
-        }
+        Logger::debug(
+            format!(
+                "LoaderElf: entry={runtime_entry:#x} load_address={:#x} max_addr={max_addr:#x}",
+                self.load_address,
+            ),
+            vk.cfg.verbose,
+        );
 
         let sp = vk.mem.stack_addr_exit.saturating_sub(0x10);
         vk.arch.regs.set_reg(

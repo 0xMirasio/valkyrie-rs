@@ -21,7 +21,7 @@ fn main() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(3)
     .entry_point(0x400000)
     .debug(true) // activate udbserver
     .debug_port(4321) // default : 1234

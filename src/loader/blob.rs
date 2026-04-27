@@ -88,14 +88,12 @@ impl Loader for LoaderBlob {
             "[heap]",
         )?;
 
-        if vk.cfg.verbose {
-            Logger::debug(
-                format!(
-                    "LoaderBlob: code_base_addr={entry:#x} code_ram_size={code_size:#x} heap_size={heap_size:#x} stack_size={stack_size:#x}",
-                ),
-                vk.cfg.verbose,
-            );
-        }
+        Logger::debug(
+            format!(
+                "LoaderBlob: code_base_addr={entry:#x} code_ram_size={code_size:#x} heap_size={heap_size:#x} stack_size={stack_size:#x}",
+            ),
+            vk.cfg.verbose,
+        );
 
         // Stack pointer
         let sp = stack_addr + stack_size - 0x10;

@@ -12,7 +12,7 @@ use std::io::{self, Read, Seek, Write};
 use std::mem;
 #[cfg(target_os = "linux")]
 use std::os::unix::io::{AsRawFd, FromRawFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "linux")]
 const FUTEX_CMD_MASK: i32 = !(libc::FUTEX_PRIVATE_FLAG | libc::FUTEX_CLOCK_REALTIME);
@@ -287,17 +287,38 @@ fn write_pollfds(vk: &mut Valkyrie, addr: u64, pollfds: &[libc::pollfd]) -> Resu
 
 fn readlink_target_for_guest(vk: &Valkyrie, path: &str) -> Option<Vec<u8>> {
     if path == "/proc/self/exe" {
-        return Some(
-            vk.cfg
-                .elf_file
-                .as_deref()
-                .unwrap_or("/proc/self/exe")
-                .as_bytes()
-                .to_vec(),
-        );
+        let elf_path = vk
+            .cfg
+            .elf_file
+            .as_deref()
+            .unwrap_or("/proc/self/exe")
+            .to_string();
+        let normalized = if Path::new(&elf_path).is_absolute() {
+            elf_path
+        } else if let Ok(canonical) = std::fs::canonicalize(&elf_path) {
+            canonical.to_string_lossy().into_owned()
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(&elf_path).to_string_lossy().into_owned()
+        } else {
+            elf_path
+        };
+
+        return Some(normalized.as_bytes().to_vec());
     }
 
     None
+}
+
+fn maybe_forward_guest_stdio(vk: &Valkyrie, fd: u64, buffer: &[u8]) -> io::Result<usize> {
+    if !vk.cfg.verbose.forwards_guest_stdio() {
+        return Ok(buffer.len());
+    }
+
+    match fd {
+        1 => io::stdout().write(buffer),
+        2 => io::stderr().write(buffer),
+        _ => Err(io::Error::from_raw_os_error(libc::EBADF)),
+    }
 }
 
 pub fn sys_read(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
@@ -759,11 +780,7 @@ pub fn sys_write(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
     let buffer = vk.mem.read(&mut vk.uc, buf_addr, count)?;
 
     let bytes_written: usize = match fd {
-        1 => match io::stdout().write(&buffer) {
-            Ok(n) => n,
-            Err(_) => return Ok(last_errno()),
-        },
-        2 => match io::stderr().write(&buffer) {
+        1 | 2 => match maybe_forward_guest_stdio(vk, fd, &buffer) {
             Ok(n) => n,
             Err(_) => return Ok(last_errno()),
         },
@@ -829,8 +846,7 @@ pub fn sys_writev(vk: &mut Valkyrie, sctx: &mut SubCtx) -> Result<u64> {
 
         let buffer = vk.mem.read(&mut vk.uc, iov_base, iov_len)?;
         let write_result = match fd {
-            1 => io::stdout().write(&buffer),
-            2 => io::stderr().write(&buffer),
+            1 | 2 => maybe_forward_guest_stdio(vk, fd, &buffer),
             _ => match table_guard.as_mut() {
                 Some(table) => match table.files.get_mut(&fd) {
                     Some(vkf) => vkf.file.write(&buffer),

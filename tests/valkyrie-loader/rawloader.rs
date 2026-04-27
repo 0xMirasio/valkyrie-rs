@@ -42,7 +42,7 @@ fn io_write_x86_64_oslinux_rawloader() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     //.disassemble(true)
     .entry_point(0x400000)
     .feed_baremetal(&HELLO_WRITE_X86_64)
@@ -62,7 +62,7 @@ fn io_write_x86_oslinux_rawloader() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     //.disassemble(true)
     .entry_point(0x400000)
     .feed_baremetal(&HELLO_WRITE_X86)

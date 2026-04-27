@@ -18,7 +18,7 @@ fn basic_common_x86_64_feed_elf_static() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     .feed_elf(common_bin_path)
     .unwrap();
 
@@ -48,7 +48,7 @@ fn basic_common_x86_feed_elf_static() {
         rootfs_path.to_string_lossy().to_string(),
     )
     .unwrap()
-    .verbose(true)
+    .verbose(1)
     .feed_elf(common_bin_path)
     .unwrap();
 
@@ -61,4 +61,27 @@ fn basic_common_x86_feed_elf_static() {
         vk.exit_status
     );
     VMemory::dump_stacks(&mut vk);
+}
+
+#[test]
+fn feed_elf_canonicalizes_relative_path() {
+    let rootfs_path = crate::linux_rootfs(Arch::X86_64);
+    let relative_elf_path = Path::new("tests")
+        .join("examples_src")
+        .join("build")
+        .join("loader_common_linux_64_static");
+    let expected = std::fs::canonicalize(&relative_elf_path).unwrap();
+
+    let cfg = ValkyrieConfig::new(
+        Arch::X86_64,
+        OsType::Linux,
+        rootfs_path.to_string_lossy().to_string(),
+    )
+    .unwrap()
+    .feed_elf(&relative_elf_path)
+    .unwrap();
+
+    let stored = Path::new(cfg.elf_file.as_deref().unwrap());
+    assert!(stored.is_absolute());
+    assert_eq!(stored, expected.as_path());
 }
